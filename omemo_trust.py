@@ -176,8 +176,6 @@ def main(argv=None):
             raise ValueError("device has no existing recorded identity")
         identity, fp = candidate
         trust_path = f"/trust/{args.jid}/{identity}"
-        if trust_path not in store:
-            raise ValueError("device identity has no existing trust entry")
         if args.command == "trust" and fp != args.fingerprint:
             raise ValueError("verified fingerprint does not match the recorded device identity; no changes made")
         grade = "TRUSTED" if args.command == "trust" else "DISTRUSTED"

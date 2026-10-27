@@ -78,6 +78,57 @@ class Config:
         self.extra = extra or {}
 
 
+@pytest.mark.asyncio
+async def test_first_message_records_identity_and_undecided_without_dispatch(tmp_path):
+    import base64
+    from types import SimpleNamespace
+    from slixmpp_omemo.xep_0384 import _make_session_manager
+    from slixmpp.stanza import Message
+
+    path = tmp_path / "omemo.json"
+    storage = adapter._StorageImpl(path)
+    bare, device = "alice@example.org", 1001
+    namespace = "eu.siacs.conversations.axolotl"
+    identity = base64.urlsafe_b64decode("WGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmY=")
+    for suffix, value in [("list", [device]), (f"{device}/namespaces", [namespace]),
+                          (f"{device}/active", {namespace: True}), (f"{device}/label", None)]:
+        await storage.store(f"/devices/{bare}/{suffix}", value)
+    manager_cls = _make_session_manager(MagicMock(), MagicMock())
+    manager = manager_cls.__new__(manager_cls)
+    manager._SessionManager__storage = storage
+    manager._SessionManager__undecided_trust_level_name = "UNDECIDED"
+    manager._download_bundle = AsyncMock(return_value=SimpleNamespace(identity_key=identity))
+    # Bundles are placed in a set by the real dependency.
+    bundle = MagicMock()
+    bundle.identity_key = identity
+    manager._download_bundle.return_value = bundle
+    plugin = MagicMock()
+    plugin.is_encrypted.return_value = True
+    plugin.get_session_manager = AsyncMock(return_value=manager)
+
+    async def decrypt(stanza):
+        info = next(iter(await manager.get_device_information(bare)))
+        result = Message()
+        result["body"] = "not yet trusted"
+        return result, info
+
+    plugin.decrypt_message = decrypt
+    a = adapter.XmppAdapter(Config({"jid": "bot@example.org", "allowed_users": bare}))
+    a.client = MagicMock()
+    a.client.__getitem__.return_value = plugin
+    a._registered_plugins.add("xep_0384")
+    a.handle_message = AsyncMock()
+    stanza = Message()
+    stanza["from"], stanza["type"], stanza["body"] = bare + "/phone", "chat", "fallback"
+    await a._on_message(stanza)
+    disk = json.loads(path.read_text())
+    encoded = base64.urlsafe_b64encode(identity).decode()
+    assert disk[f"/devices/{bare}/{device}/identity_key"] == encoded
+    assert disk[f"/trust/{bare}/{encoded}"] == "UNDECIDED"
+    manager._download_bundle.assert_awaited_once()
+    a.handle_message.assert_not_awaited()
+
+
 @pytest.mark.parametrize("raw,expected", [("", False), ("false", False), ("true", True)])
 def test_btbv_requires_opt_in(monkeypatch, raw, expected):
     monkeypatch.setenv("XMPP_OMEMO_BTBV", raw)

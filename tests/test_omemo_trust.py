@@ -181,7 +181,7 @@ def test_parser_rejects_without_writes(store, args):
 
 
 @pytest.mark.parametrize("change", [
-    lambda s: s.pop(DEVICE), lambda s: s.pop(TRUST),
+    lambda s: s.pop(DEVICE),
     lambda s: s.update({TRUST: "UNKNOWN"}), lambda s: s.update({TRUST: []}),
     lambda s: s.update({DEVICE: "not-a-key"}),
     lambda s: s.update({DEVICE: base64.urlsafe_b64encode(bytes(32)).decode()}),
@@ -227,6 +227,16 @@ def test_fingerprint_mismatch(store):
     assert invoke(store, *mutation(fingerprint="00" * 32)) == 1
     assert store.read_bytes() == before
     assert len(list(store.parent.iterdir())) == 1
+
+
+@pytest.mark.parametrize("command,grade", [("trust", "TRUSTED"), ("distrust", "DISTRUSTED")])
+def test_known_identity_without_trust_entry(store, command, grade):
+    data = json.loads(store.read_text())
+    del data[TRUST]
+    store.write_text(json.dumps(data))
+    assert invoke(store, *mutation(command)) == 0
+    data[TRUST] = grade
+    assert json.loads(store.read_text()) == data
 
 
 @pytest.mark.parametrize("raw", ["[]", "null", '{"devices": {}}', '{"/a":1,"/a":2}', '{"/a": NaN}', "{", "\udcff"])

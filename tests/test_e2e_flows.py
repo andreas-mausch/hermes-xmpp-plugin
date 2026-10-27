@@ -394,12 +394,15 @@ async def test_incoming_device_trust(adapter_instance, monkeypatch, trust, btbv,
     monkeypatch.setattr(adapter, "SLIXMPP_OMEMO_AVAILABLE", True)
     monkeypatch.setattr(adapter, "TrustLevel", SimpleNamespace(
         TRUSTED=SimpleNamespace(value="TRUSTED"),
+        UNDECIDED=SimpleNamespace(value="UNDECIDED"),
         BLINDLY_TRUSTED=SimpleNamespace(value="BLINDLY_TRUSTED")))
     plugin = MagicMock()
     plugin.is_encrypted.return_value = True
     plugin.decrypt_message = AsyncMock(return_value=(
         _make_stanza(body="authenticated"),
-        SimpleNamespace(trust_level_name=trust, device_id=1)))
+        SimpleNamespace(trust_level_name=trust, device_id=1,
+                        bare_jid="peer@example.org", identity_key=b"identity")))
+    plugin.get_session_manager = AsyncMock(return_value=SimpleNamespace(set_trust=AsyncMock()))
     a.client.plugins["xep_0384"] = plugin
     await a._on_message(_make_stanza(type="chat", body="fallback"))
     assert bool(captured_handle_calls) is accepted

@@ -1112,6 +1112,12 @@ class XmppAdapter(BasePlatformAdapter):
                             and _truthy(os.getenv("XMPP_OMEMO_BTBV", "false"))
                         )
                         if stanza_type != "groupchat" and not trusted:
+                            if device_info.trust_level_name == TrustLevel.UNDECIDED.value:
+                                manager = await xep_0384.get_session_manager()
+                                await manager.set_trust(
+                                    device_info.bare_jid, device_info.identity_key,
+                                    TrustLevel.UNDECIDED.value,
+                                )
                             logger.warning("OMEMO: ignoring message from untrusted device for %s", from_bare)
                             return
                         decrypted = True
