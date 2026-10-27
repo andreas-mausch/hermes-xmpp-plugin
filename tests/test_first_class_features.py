@@ -189,6 +189,7 @@ def fake_adapter(fake_client):
     cfg.password = "secret"
     cfg.home_channel = None
     cfg.fileserver_url = None
+    cfg.extra = {"omemo_enabled": False}
 
     a = adapter.XmppAdapter(cfg)
     a.client = fake_client

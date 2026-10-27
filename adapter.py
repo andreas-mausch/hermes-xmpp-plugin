@@ -185,7 +185,7 @@ if SLIXMPP_OMEMO_AVAILABLE:
 
         @property
         def _btbv_enabled(self) -> bool:
-            return True
+            return _truthy(os.getenv("XMPP_OMEMO_BTBV", "false"))
 
         async def _devices_blindly_trusted(  # type: ignore[override]
             self,
@@ -199,7 +199,7 @@ if SLIXMPP_OMEMO_AVAILABLE:
             manually_trusted,
             identifier,
         ) -> None:
-            # BTBV is enabled so this is rare. Log and auto-distrust to avoid blocking.
+            # Non-interactive gateway: require an explicit persisted trust decision.
             session_manager = await self.get_session_manager()
             for device in manually_trusted:
                 logger.warning(
@@ -1050,6 +1050,11 @@ class XmppAdapter(BasePlatformAdapter):
 
             body = stanza["body"] or ""
             stanza_to_dispatch = stanza
+            chat_type = "group" if stanza_type == "groupchat" else "dm"
+            user_id = (self._muc_real_jid(stanza) or from_bare) if chat_type == "group" else from_bare
+            if not self._is_authorized(chat_type=chat_type, chat_id=from_bare, user_jid=user_id):
+                return
+            decrypted = False
 
             # OMEMO decryption
             if self.client is not None and "xep_0384" in self._registered_plugins and SLIXMPP_OMEMO_AVAILABLE:
@@ -1058,6 +1063,12 @@ class XmppAdapter(BasePlatformAdapter):
                 if xep_0384.is_encrypted(stanza):
                     try:
                         decrypted_stanza, device_info = await xep_0384.decrypt_message(stanza)
+                        if stanza_type != "groupchat" and device_info.trust_level_name not in (
+                            TrustLevel.TRUSTED.value, TrustLevel.BLINDLY_TRUSTED.value
+                        ):
+                            logger.warning("OMEMO: ignoring message from untrusted device for %s", from_bare)
+                            return
+                        decrypted = True
                         body = decrypted_stanza.get("body", "") or ""
                         stanza_to_dispatch = decrypted_stanza
                         logger.debug(
@@ -1067,6 +1078,10 @@ class XmppAdapter(BasePlatformAdapter):
                     except Exception as exc:
                         logger.warning("OMEMO: failed to decrypt message from %s: %s", from_bare, exc)
                         return
+
+            if self._omemo_enabled and stanza_type != "groupchat" and not decrypted:
+                logger.debug("OMEMO: ignoring unencrypted 1:1 stanza from %s", from_bare)
+                return
 
             # ----------------------------------------------------------------
             # Inbound XEP-0004 form submission (clarify response)
@@ -1091,7 +1106,8 @@ class XmppAdapter(BasePlatformAdapter):
             except Exception:
                 pass
 
-            if form is not None:
+            # Legacy OMEMO authenticates only the body, not sibling data forms.
+            if form is not None and not (self._omemo_enabled and stanza_type != "groupchat"):
                 try:
                     form_type = form.get("type", "")
                 except Exception:
@@ -1301,19 +1317,14 @@ class XmppAdapter(BasePlatformAdapter):
 
         mtype = "groupchat" if self._is_muc(chat_id) else "chat"
 
-        # OMEMO encrypt when available
-        if (
-            "xep_0384" in self._registered_plugins
-            and SLIXMPP_OMEMO_AVAILABLE
-            and mtype == "chat"
-        ):
+        if self._omemo_enabled and mtype == "chat":
             try:
                 return await self._send_encrypted(chat_id, content)
             except Exception as exc:
                 logger.warning(
-                    "OMEMO: encryption failed for %s (%s), sending plaintext", chat_id, exc
+                    "OMEMO: encryption failed for %s (%s); plaintext refused", chat_id, exc
                 )
-                # fall through to plain send
+                return SendResult(success=False, error=f"OMEMO encryption failed: {exc}", retryable=True)
 
         try:
             client_local = self.client  # type: ignore[assignment]
@@ -1452,17 +1463,17 @@ class XmppAdapter(BasePlatformAdapter):
             )
 
             # OMEMO encrypt for 1:1 chats (same path as send())
-            if (
-                "xep_0384" in self._registered_plugins
-                and SLIXMPP_OMEMO_AVAILABLE
-                and mtype == "chat"
-            ):
+            if self._omemo_enabled and mtype == "chat":
                 try:
+                    if "xep_0384" not in self._registered_plugins or not SLIXMPP_OMEMO_AVAILABLE:
+                        raise RuntimeError("OMEMO encryption unavailable")
                     xep_0384 = client_local["xep_0384"]
                     recipient_jid = JID(chat_id)
                     encrypted, errors = await xep_0384.encrypt_message(stanza, {recipient_jid})
                     if errors:
                         logger.info("OMEMO: edit encryption non-critical errors: %s", errors)
+                    if encrypted is None:
+                        raise RuntimeError("OMEMO returned no encrypted stanza")
                     if encrypted is not None:
                         stanza = encrypted
                         # encrypt_message clear()s the stanza and rebuilds with only
@@ -1481,7 +1492,8 @@ class XmppAdapter(BasePlatformAdapter):
                             except Exception:
                                 pass
                 except Exception as exc:
-                    logger.warning("OMEMO: edit encryption failed for %s (%s), sending plaintext", chat_id, exc)
+                    logger.warning("OMEMO: edit encryption failed for %s (%s); plaintext refused", chat_id, exc)
+                    return SendResult(success=False, error=f"OMEMO edit encryption failed: {exc}", retryable=True)
 
             stanza.send()
             msg_id = None
@@ -1600,6 +1612,8 @@ class XmppAdapter(BasePlatformAdapter):
         """Encrypt and send a single OMEMO stanza (one chunk)."""
         if self.client is None:
             return SendResult(success=False, error="xmpp not connected", retryable=True)
+        if "xep_0384" not in self._registered_plugins or not SLIXMPP_OMEMO_AVAILABLE:
+            return SendResult(success=False, error="OMEMO encryption unavailable", retryable=True)
         client_local = self.client  # type: ignore[assignment]
         xep_0384 = client_local["xep_0384"]
         mtype = "chat"
@@ -1614,15 +1628,7 @@ class XmppAdapter(BasePlatformAdapter):
             logger.info("OMEMO: encryption non-critical errors: %s", encryption_errors)
 
         if message is None:
-            logger.warning("OMEMO: nothing to encrypt, falling back to plaintext")
-            client_local = self.client  # type: ignore[assignment]
-            stanza = client_local.send_message(mto=chat_id, mbody=content, mtype=mtype, mchat_state="active")
-            msg_id = None
-            try:
-                msg_id = stanza["id"]
-            except Exception:
-                pass
-            return SendResult(success=True, message_id=msg_id, raw_response=stanza)
+            return SendResult(success=False, error="OMEMO returned no encrypted stanza", retryable=True)
 
         # Explicit Message Encryption (XEP-0380) hint for compatibility.
         # Only set it when the plugin is actually registered; without it the
@@ -1841,7 +1847,9 @@ class XmppAdapter(BasePlatformAdapter):
         if self.client is None:
             return SendResult(success=False, error="xmpp not connected", retryable=True)
 
-        if not choices or "xep_0004" not in self._registered_plugins or self._clarify_forms_disabled:
+        if (not choices or "xep_0004" not in self._registered_plugins
+                or self._clarify_forms_disabled
+                or (self._omemo_enabled and not self._is_muc(chat_id))):
             # Fallback to text-based clarify
             from tools.clarify_gateway import mark_awaiting_text
             if choices:

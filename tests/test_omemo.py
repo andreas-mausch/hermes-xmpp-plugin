@@ -78,6 +78,13 @@ class Config:
         self.extra = extra or {}
 
 
+@pytest.mark.parametrize("raw,expected", [("", False), ("false", False), ("true", True)])
+def test_btbv_requires_opt_in(monkeypatch, raw, expected):
+    monkeypatch.setenv("XMPP_OMEMO_BTBV", raw)
+    plugin = adapter._XEP_0384Impl.__new__(adapter._XEP_0384Impl)
+    assert plugin._btbv_enabled is expected
+
+
 def test_apply_yaml_config_seeds_omemo(monkeypatch):
     for name in ["XMPP_JID", "XMPP_PASSWORD", "XMPP_OMEMO_ENABLED", "XMPP_OMEMO_STORAGE_PATH"]:
         monkeypatch.delenv(name, raising=False)

@@ -262,3 +262,24 @@ For testing against a real Hermes checkout, set `PYTHONPATH`:
 ```bash
 PYTHONPATH=/path/to/hermes-agent python -m pytest -q
 ```
+# OMEMO Security Policy
+
+OMEMO is enabled by default. Direct-message bodies, corrections and clarify
+questions fail closed if encryption is unavailable or fails. Plaintext direct
+messages, including bodyless form submissions, are ignored while OMEMO is
+configured. Set `XMPP_OMEMO_ENABLED=false` only to intentionally use plaintext.
+OMEMO clarifications use numbered encrypted text, not legacy data forms.
+Form submissions in plaintext mode are checked against the allow-list first.
+
+New devices are not blindly trusted by default. `XMPP_OMEMO_BTBV=true` opts
+into blind trust; existing persisted decisions remain unchanged. With the
+gateway stopped, an operator can change the relevant
+`/trust/<bare-jid>/<identity-key>` entry in `xmpp_omemo.json` to `TRUSTED`
+after verifying the fingerprint out of band, then restart. `BLINDLY_TRUSTED`
+is also accepted, but is not verified trust. Incoming direct messages require
+a persisted trusted or blindly trusted device, not just successful decryption.
+
+MUC text behavior is unchanged. Legacy OMEMO protects bodies, not all stanza
+metadata: corrections, reactions, typing, retractions and sibling extensions
+are not covered by a blanket authenticity guarantee. Legacy data forms are
+never acted on in OMEMO direct chats, even beside an encrypted body.

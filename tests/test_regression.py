@@ -158,6 +158,7 @@ def adapter_instance():
     cfg.password = "secret"
     cfg.home_channel = None
     cfg.fileserver_url = None
+    cfg.extra = {"omemo_enabled": False}
 
     a = adapter.XmppAdapter(cfg)
     a._self_bare = "hermes@example.org"

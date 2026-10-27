@@ -234,6 +234,7 @@ def adapter_instance():
     cfg.password = "secret"
     cfg.home_channel = None
     cfg.fileserver_url = None
+    cfg.extra = {"omemo_enabled": False}
 
     a = adapter.XmppAdapter(cfg)
     a.allow_all_users = True
@@ -265,6 +266,89 @@ def clear_captured():
     captured_handle_calls.clear()
     yield
     captured_handle_calls.clear()
+
+
+@pytest.mark.asyncio
+async def test_configured_omemo_missing_plugin_refuses_send(adapter_instance):
+    a = adapter_instance
+    a._omemo_enabled = True
+    result = await a.send("peer@example.org", "secret")
+    assert not result.success
+    a.client.make_message.assert_not_called()
+    a.client.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_configured_omemo_rejects_plain_input(adapter_instance):
+    a = adapter_instance
+    a._omemo_enabled = True
+    await a._on_message(_make_stanza(type="chat", body="injected", from_jid="peer@example.org"))
+    assert not captured_handle_calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled,authorized", [(True, True), (False, False)])
+async def test_bodyless_forms_cannot_bypass_policy(adapter_instance, enabled, authorized):
+    a = adapter_instance
+    a._omemo_enabled = enabled
+    a.allow_all_users = authorized
+    a.allowed_users = set()
+    a._handle_form_submission = MagicMock()
+    form = MagicMock()
+    form.get.return_value = "submit"
+    await a._on_message(_make_stanza(type="chat", body="", form=form))
+    a._handle_form_submission.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", [None, RuntimeError("no keys")])
+async def test_encryption_never_falls_back(adapter_instance, monkeypatch, outcome):
+    a = adapter_instance
+    a._omemo_enabled = True
+    a._registered_plugins.add("xep_0384")
+    monkeypatch.setattr(adapter, "SLIXMPP_OMEMO_AVAILABLE", True)
+    plugin = MagicMock()
+    plugin.encrypt_message = AsyncMock(
+        side_effect=outcome if isinstance(outcome, Exception) else None,
+        return_value=(None, {}),
+    )
+    a.client.plugins["xep_0384"] = plugin
+    result = await a.send("peer@example.org", "secret")
+    assert not result.success
+    a.client.send_message.assert_not_called()
+    a.client.make_message.return_value.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("trust,accepted", [("TRUSTED", True), ("BLINDLY_TRUSTED", True),
+                                          ("UNDECIDED", False), ("DISTRUSTED", False)])
+async def test_incoming_device_trust(adapter_instance, monkeypatch, trust, accepted):
+    from types import SimpleNamespace
+    a = adapter_instance
+    a._omemo_enabled = True
+    a._registered_plugins.add("xep_0384")
+    monkeypatch.setattr(adapter, "SLIXMPP_OMEMO_AVAILABLE", True)
+    monkeypatch.setattr(adapter, "TrustLevel", SimpleNamespace(
+        TRUSTED=SimpleNamespace(value="TRUSTED"),
+        BLINDLY_TRUSTED=SimpleNamespace(value="BLINDLY_TRUSTED")))
+    plugin = MagicMock()
+    plugin.is_encrypted.return_value = True
+    plugin.decrypt_message = AsyncMock(return_value=(
+        _make_stanza(body="authenticated"),
+        SimpleNamespace(trust_level_name=trust, device_id=1)))
+    a.client.plugins["xep_0384"] = plugin
+    await a._on_message(_make_stanza(type="chat", body="fallback"))
+    assert bool(captured_handle_calls) is accepted
+
+
+@pytest.mark.asyncio
+async def test_omemo_clarify_uses_encrypted_text(adapter_instance):
+    a = adapter_instance
+    a._omemo_enabled = True
+    a.send = AsyncMock(return_value=adapter.SendResult(success=True))
+    await a.send_clarify("peer@example.org", "Choose", ["A", "B"], "id", "session")
+    assert "1. A" in a.send.await_args.kwargs["content"]
+    a.client.make_message.assert_not_called()
 
 
 # -----------------------------------------------------------------
