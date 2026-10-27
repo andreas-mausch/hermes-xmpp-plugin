@@ -1802,7 +1802,7 @@ class XmppAdapter(BasePlatformAdapter):
         sealed = AESGCM(key).encrypt(iv, Path(path).read_bytes(), None)
         with BytesIO(sealed) as stream:
             url = await self.client["xep_0363"].upload_file(
-                filename=path, size=len(sealed), content_type="application/octet-stream",
+                filename=Path(path).name, size=len(sealed), content_type="application/octet-stream",
                 input_file=stream,
             )
         parts = urlsplit(url)

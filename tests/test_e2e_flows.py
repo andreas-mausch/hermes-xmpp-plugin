@@ -442,6 +442,7 @@ async def test_sealed_upload_roundtrip(adapter_instance, tmp_path):
     uploaded = []
 
     async def upload(**kwargs):
+        assert kwargs["filename"] == path.name
         uploaded.append(kwargs["input_file"].read())
         assert kwargs["size"] == len(uploaded[0])
         assert kwargs["content_type"] == "application/octet-stream"

@@ -363,8 +363,10 @@ plaintext override enabled.
 `omemo.media` (nested YAML), `omemo_media` (flat YAML/extra), or
 `XMPP_OMEMO_MEDIA` controls XEP-0454 sealed uploads. It defaults to the OMEMO
 enabled setting, so deliberately plaintext installations retain plain uploads.
-Explicitly enabling media requires usable 1:1 OMEMO; MUCs, disabled OMEMO and
-missing plugins fail before upload. Set media false to retain plain MUC media.
+This is a global option with no per-destination override. Setting it true
+requires usable 1:1 OMEMO; MUC media, disabled OMEMO and missing plugins fail
+before upload. Setting it false permits plain MUC media but disables upload
+sealing globally, including for DMs; DM links still use OMEMO when enabled.
 
 Files, images, video and voice are AES-256-GCM sealed before HTTP upload.
 Only ciphertext and its authentication tag reach the upload service. The

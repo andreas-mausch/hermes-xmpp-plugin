@@ -16,12 +16,21 @@ BASE = "WGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmY="
 FP = "09" + "00" * 31
 DEVICE = "/devices/alice@example.org/1001/identity_key"
 TRUST = "/trust/alice@example.org/" + BASE
+LIST = "/devices/alice@example.org/list"
 
 
 @pytest.fixture
 def store(tmp_path):
     path = tmp_path / "store.json"
-    path.write_text(json.dumps({DEVICE: BASE, TRUST: "UNDECIDED", "/secret": "DO_NOT_DISPLAY"}))
+    path.write_text(json.dumps({
+        DEVICE: BASE, TRUST: "UNDECIDED", LIST: [1001, 2147483647],
+        "/devices/bob@example.org/list": [],
+        "/devices/alice@example.org/1001/namespaces": ["eu.siacs.conversations.axolotl"],
+        "/devices/alice@example.org/1001/active": {"eu.siacs.conversations.axolotl": True},
+        "/devices/alice@example.org/1001/label": None,
+        "/own_device_id": 1001, "/secret": "DO_NOT_DISPLAY",
+        "/sessions/alice@example.org/1001": {"state": "DO_NOT_DISPLAY"},
+    }))
     path.chmod(0o640)
     return path
 
@@ -49,6 +58,7 @@ def test_public_vectors(public, expected):
 
 
 def test_list_snapshot_filter(store, capsys):
+    before = store.read_bytes()
     assert invoke(store, "list", "--jid", "alice@example.org") == 0
     out = capsys.readouterr()
     assert "1001\tUNDECIDED\t09000000" in out.out
@@ -56,6 +66,7 @@ def test_list_snapshot_filter(store, capsys):
     assert "snapshot" in out.err and "ALL writers" in out.err
     assert invoke(store, "list", "--jid", "bob@example.org") == 0
     assert "1001" not in capsys.readouterr().out
+    assert store.read_bytes() == before
 
 
 @pytest.mark.parametrize("command,grade", [("trust", "TRUSTED"), ("distrust", "DISTRUSTED")])
@@ -75,7 +86,9 @@ def test_mutation_backup_atomic(store, monkeypatch, capsys, command, grade):
     monkeypatch.setattr(cli.os, "replace", checked)
     assert invoke(store, *mutation(command, " ".join(FP.lower()[i:i+8] for i in range(0, 64, 8)))) == 0
     assert len(calls) == 1
-    assert json.loads(store.read_text()) == {DEVICE: BASE, TRUST: grade, "/secret": "DO_NOT_DISPLAY"}
+    expected = json.loads(raw)
+    expected[TRUST] = grade
+    assert json.loads(store.read_text()) == expected
     after = store.stat()
     assert stat.S_IMODE(after.st_mode) == 0o640
     assert (after.st_uid, after.st_gid) == (before.st_uid, before.st_gid)
@@ -113,6 +126,9 @@ def test_parser_rejects_without_writes(store, args):
     lambda s: s.update({DEVICE: base64.urlsafe_b64encode(bytes(32)).decode()}),
     lambda s: s.update({"/devices/alice@example.org/0/identity_key": BASE}),
     lambda s: s.update({"/devices/alice@example.org/bad": BASE}),
+    lambda s: s.update({"/devices//list": []}),
+    lambda s: s.update({"/devices/alice@example.org/list/extra": []}),
+    lambda s: s.update({"/devices/alice@example.org/list/": []}),
 ])
 def test_invalid_entries_no_writes(store, change):
     data = json.loads(store.read_text())
@@ -122,6 +138,27 @@ def test_invalid_entries_no_writes(store, change):
     assert invoke(store, *mutation()) == 1
     assert store.read_bytes() == before
     assert len(list(store.parent.iterdir())) == 1
+
+
+@pytest.mark.parametrize("value", [None, {}, "1001", 1001, [True], [False], ["1001"],
+                                  [1.0], [None], [[]], [0], [-1], [2147483648]])
+@pytest.mark.parametrize("command", ["list", "trust", "distrust"])
+def test_invalid_device_list_no_writes(store, value, command):
+    data = json.loads(store.read_text())
+    data[LIST] = value
+    store.write_text(json.dumps(data))
+    before = store.read_bytes()
+    assert invoke(store, *(["list"] if command == "list" else mutation(command))) == 1
+    assert store.read_bytes() == before
+    assert len(list(store.parent.iterdir())) == 1
+
+
+@pytest.mark.parametrize("value", [[], [1], [2147483647], [1001, 2]])
+def test_valid_device_lists(store, value):
+    data = json.loads(store.read_text())
+    data[LIST] = value
+    store.write_text(json.dumps(data))
+    assert invoke(store, "list") == 0
 
 
 def test_fingerprint_mismatch(store):

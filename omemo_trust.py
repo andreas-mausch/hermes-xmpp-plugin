@@ -146,6 +146,13 @@ def main(argv=None):
                 fingerprint(parts[3])
             if key.startswith("/devices/"):
                 parts = key.split("/")
+                if len(parts) == 4 and parts[3] == "list":
+                    jid(parts[2])
+                    if not isinstance(value, list) or any(type(item) is not int for item in value):
+                        raise ValueError("invalid device list")
+                    for item in value:
+                        device_id(str(item))
+                    continue
                 if len(parts) != 5:
                     raise ValueError("invalid device path")
                 jid(parts[2])
