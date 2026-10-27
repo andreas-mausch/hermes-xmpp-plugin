@@ -205,6 +205,26 @@ def _make_stanza(**fields):
     return _create_stanza(fields)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sender,accepted", [
+    ("attacker@example.org/phone", False),
+    ("unknown@conference.example.org/nick", False),
+    ("room@conference.example.org/nick", True),
+    ("room@conference.example.org/hermes", False),
+])
+async def test_real_groupchat_requires_known_room_even_allow_all(adapter_instance, sender, accepted):
+    from slixmpp.stanza import Message
+    a = adapter_instance
+    a.allow_all_users = True
+    a._omemo_enabled = True
+    a.muc_nick = "hermes"
+    a.handle_message = AsyncMock()
+    stanza = Message()
+    stanza["from"], stanza["type"], stanza["body"] = sender, "groupchat", "plaintext"
+    await a._on_message(stanza)
+    assert bool(a.handle_message.await_count) is accepted
+
+
 def _make_reply_stanza(reply_id="orig-id", body="> prior\nresponse"):
     """Build a stanza that carries a XEP-0461 <reply>."""
     reply_elem = MagicMock()

@@ -1082,6 +1082,8 @@ class XmppAdapter(BasePlatformAdapter):
             # MUC history replay on join) carry our own nick as the resource —
             # skip them, otherwise the bot replies to itself in an endless loop.
             if stanza_type == "groupchat":
+                if from_bare not in self._known_mucs:
+                    return
                 room_nick = self._muc_room_nick(from_bare) or self.muc_nick
                 if from_resource and from_resource == room_nick:
                     return
@@ -1328,10 +1330,10 @@ class XmppAdapter(BasePlatformAdapter):
         return self.muc_nick
 
     def _is_authorized(self, *, chat_type: str, chat_id: str, user_jid: str) -> bool:
-        if self.allow_all_users:
-            return True
         if chat_type == "group":
             return chat_id in self._known_mucs
+        if self.allow_all_users:
+            return True
         if not self.allowed_users:
             return False
         return self._bare(user_jid) in self.allowed_users
