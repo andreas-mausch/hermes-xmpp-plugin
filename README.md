@@ -31,8 +31,8 @@ media is supported only for 1:1 chats.
 Compared with [fastfinge/hermes-xmpp-plugin](https://github.com/fastfinge/hermes-xmpp-plugin)
 at `d01087a` (upstream HEAD checked on 2026-10-27):
 
-- **Message security:** Plaintext DM input is rejected by default, with an inbound-only
-  debugging override. With OMEMO enabled, outgoing text, edits and clarify prompts fail closed.
+- **Message security:** With OMEMO enabled, plaintext DM input is rejected by default,
+  with an inbound-only debugging override. Outgoing text, edits and clarify prompts fail closed.
 - **Device trust:** Blind trust is off by default; incoming OMEMO DMs require trusted identities.
 - **Clarifications and forms:** OMEMO prompts use encrypted numbered text. Form submissions
   require authorization; encrypted DMs ignore unauthenticated sibling forms.
@@ -40,8 +40,9 @@ at `d01087a` (upstream HEAD checked on 2026-10-27):
   links. Captions are separately encrypted; links stay intact. Sealing is global, unsupported
   targets including MUCs fail before upload, and sealed uploads pass only the file basename.
 - **Trust CLI:** An argparse CLI lists devices and grants or revokes trust offline. Grants
-  require independently verified fingerprints via XEdDSA. Validated store updates use private
-  backups and atomic replacement; listings are aligned and device IDs sorted numerically.
+  require a fingerprint independently verified by the operator; XEdDSA converts the stored key
+  for comparison. Validated store updates use private backups and atomic replacement;
+  listings are aligned and device IDs sorted numerically.
 - **Display name:** XEP-0172 names support config, environment and a Hermes-home file fallback.
   Available and subscribe presence advertise the name; authorized subscriptions refresh presence.
 - **Documentation and tests:** Updated configuration examples and operator guides explain
