@@ -69,6 +69,20 @@ def test_list_snapshot_filter(store, capsys):
     assert store.read_bytes() == before
 
 
+def test_list_sorts_device_ids_numerically_within_jid(store, capsys):
+    data = json.loads(store.read_text())
+    for bare, device in [("bob@example.org", "2"), ("alice@example.org", "10"),
+                         ("alice@example.org", "2"), ("bob@example.org", "1")]:
+        data[f"/devices/{bare}/{device}/identity_key"] = BASE
+    store.write_text(json.dumps(data))
+
+    assert invoke(store, "list") == 0
+    rows = [line.split("\t")[:2] for line in capsys.readouterr().out.splitlines()[1:]]
+    assert rows == [["alice@example.org", "2"], ["alice@example.org", "10"],
+                    ["alice@example.org", "1001"], ["bob@example.org", "1"],
+                    ["bob@example.org", "2"]]
+
+
 @pytest.mark.parametrize("command,grade", [("trust", "TRUSTED"), ("distrust", "DISTRUSTED")])
 def test_mutation_backup_atomic(store, monkeypatch, capsys, command, grade):
     raw = store.read_bytes()

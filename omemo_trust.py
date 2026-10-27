@@ -161,7 +161,9 @@ def main(argv=None):
                     devices[(parts[2], parts[3])] = (value, fingerprint(value))
         if args.command == "list":
             print("JID\tDEVICE_ID\tTRUST\tFINGERPRINT")
-            for (bare, device), (identity, fp) in sorted(devices.items()):
+            for (bare, device), (identity, fp) in sorted(
+                devices.items(), key=lambda item: (item[0][0], int(item[0][1]))
+            ):
                 if args.jid is None or args.jid == bare:
                     grade = store.get(f"/trust/{bare}/{identity}", "MISSING")
                     print(f"{bare}\t{device}\t{grade}\t{' '.join(fp[i:i+8] for i in range(0, 64, 8))}")
