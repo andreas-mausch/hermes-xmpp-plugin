@@ -287,12 +287,29 @@ continues to work regardless of this setting. MUC behavior is unchanged.
 New devices are not blindly trusted by default. `XMPP_OMEMO_BTBV=true` opts
 into blind trust. Explicitly `TRUSTED` decisions remain effective. The
 dependency treats `BLINDLY_TRUSTED` as undecided when BTBV is off; outbound
-manual-trust handling can mark such devices `DISTRUSTED`. With the
-gateway stopped, an operator can change the relevant
-`/trust/<bare-jid>/<identity-key>` entry in `xmpp_omemo.json` to `TRUSTED`
-after verifying the fingerprint out of band, then restart. `BLINDLY_TRUSTED`
+manual-trust handling can mark such devices `DISTRUSTED`. With all store
+writers stopped, use the CLI below to set the existing identity's trust to
+`TRUSTED` after verifying the fingerprint out of band, then restart. `BLINDLY_TRUSTED`
 is accepted only with BTBV enabled, and is not verified trust. Incoming direct
 messages require effective device trust, not just successful decryption.
+
+For offline trust maintenance, run the argparse CLI from this repository using
+the adapter's Python environment with the optional OMEMO dependencies installed:
+
+```bash
+python -m omemo_trust --store /actual/path/xmpp_omemo.json list --jid alice@example.org
+python -m omemo_trust --store /actual/path/xmpp_omemo.json trust --offline --jid alice@example.org --device-id 1001 --fingerprint 'INDEPENDENTLY VERIFIED 64 HEX CHARACTERS'
+python -m omemo_trust --store /actual/path/xmpp_omemo.json distrust --offline --jid alice@example.org --device-id 1001
+```
+
+Stop **all writers** first: the adapter caches the store and can overwrite edits.
+`--offline` acknowledges this; it does not detect writers or stop them. `list`
+is only a snapshot and warns about live reads. Trust requires an independently
+verified fingerprint matching an existing identity and trust entry. Mutations
+make a private backup containing secrets and atomically preserve store mode and
+ownership; custom ACLs/extended attributes are not preserved. Without `--store`,
+the CLI uses `XMPP_OMEMO_STORAGE_PATH` or `xmpp_omemo.json` under the resolved
+Hermes home. It does not load adapter configuration or `.env`.
 
 For operator procedures, see the [fingerprint and trust guide](docs/omemo-fingerprints-and-trust-guide.md)
 and [new-device trust runbook](docs/omemo-new-device-trust-runbook.md).

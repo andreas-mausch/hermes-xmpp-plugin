@@ -1,243 +1,146 @@
 # Hermes XMPP: Verifying and Trusting a New OMEMO Device
 
 Companion: [OMEMO fingerprints and trust guide](omemo-fingerprints-and-trust-guide.md).
-All JIDs below are examples; replace `alice@example.org` with the contact's
-actual bare JID (without a resource).
+All JIDs, device IDs, paths, UIDs and fingerprints below are examples.
 
-## Scope and Security Preconditions
+## Scope and Preconditions
 
-This procedure changes trust for a contact's device. It does not register a new
-Hermes identity or add a contact to the gateway's user allow-list.
+This procedure changes an existing device identity's persisted trust. It does
+not register an identity or add a contact to the gateway allow-list. The default
+policy enables OMEMO, disables Blind Trust Before Verification (BTBV), and
+requires effective device trust for incoming direct messages. Outbound manual
+trust handling can mark undecided devices `DISTRUSTED`. Grant `TRUSTED` only
+after independent verification. Confirm your deployed adapter and configuration
+match the [security policy](../README.md#omemo-security-policy).
 
-The repository adapter defaults to OMEMO enabled and strict direct-message
-trust, with Blind Trust Before Verification (BTBV) off. Explicit `TRUSTED`
-decisions remain effective. With BTBV off, the dependency treats
-`BLINDLY_TRUSTED` as undecided; outbound manual-trust handling can mark undecided
-devices `DISTRUSTED`. Incoming direct messages require effective device trust,
-not just successful decryption. Use `TRUSTED` only after independent verification.
+Use `python -m omemo_trust` from this repository directory, with the same Python
+environment and optional OMEMO dependencies as the adapter. The CLI uses
+XEdDSA's vetted Ed25519-to-Curve25519 public-key conversion, not handwritten
+curve arithmetic. It handles the documented flat JSON store and legacy
+fingerprints, not every OMEMO format.
 
-See the [OMEMO security policy](../README.md#omemo-security-policy) for the
-enforcement scope and opt-outs. Confirm the deployed adapter and effective
-configuration match it before testing. In particular, keep `XMPP_OMEMO_BTBV`
-off and OMEMO enabled for this procedure. TLS alone does not protect message
-content from the server. Do not send sensitive discovery or test content.
+`--store` explicitly selects the store. Otherwise the CLI uses
+`XMPP_OMEMO_STORAGE_PATH`, then the resolved Hermes home (Hermes' context-aware
+helper when available, otherwise `HERMES_HOME` or `~/.hermes`) plus
+`xmpp_omemo.json`. It does not import the adapter, load `.env`, or read nested
+`omemo.storage_path` / flat `omemo_storage_path` configuration. Select the actual
+profile and configured path explicitly when needed.
 
-The companion guide records the dependency versions checked for the flat store
-layout, URL-safe Base64 Ed25519 identity keys and textual trust grades. Check
-your installed versions before applying the scripts; do not assume every
-deployment uses the same representation.
+## 1. Discover the Identity
 
-## Execution Environment
+Have the contact send a non-sensitive OMEMO test message from the new device.
+The adapter may record its identity during processing, even when strict policy
+prevents dispatch to Hermes. A refused message does not guarantee an entry was
+created. If missing, investigate publication, allow-list and initialization;
+do not invent device or trust entries.
 
-**Illustrative deployment assumptions, not repository defaults:** this repository
-ships no Compose stack. The commands below assume your own `compose.yaml`, a
-service named `hermes`, Python 3, a persistent data volume and store-owner UID
-10000. Run Docker commands **on the host**, in your stack's directory, only after
-checking the actual service, mounts, interpreter, UID/GID and paths. Substitute
-your values in every command and script.
+Use the identity actually recorded by the adapter. Legacy server bundles publish
+X25519 keys; converting Ed25519 to X25519 loses a sign bit and is not uniquely
+reversible. Server publication does not establish device ownership.
 
-- Example store inside the container: `/opt/data/xmpp_omemo.json`.
-- Example installed adapter: `/opt/data/plugins/hermes-xmpp-plugin/adapter.py`.
-- Example gateway log: `/opt/data/logs/gateway.log`.
-- The adapter default is `xmpp_omemo.json` under the resolved Hermes home, not
-  `/opt/data`. Check nested `omemo.storage_path`, flat `omemo_storage_path` and
-  `XMPP_OMEMO_STORAGE_PATH`, as well as the actual persistent mount.
-- Stop all other processes or containers that write this same store, including
-  one-shot senders. Stopping the gateway alone does not stop external writers.
+## 2. Stop All Writers and List
 
-## 1. Discover the Device Identity
+The adapter holds its store in memory and rewrites JSON non-atomically on storage
+updates. A live edit can be overwritten; a live read may be incomplete or stale.
+Stop **all** writers, including other profiles, containers and one-shot senders,
+before maintenance. The CLI cannot reliably detect them. `--offline` is a
+required acknowledgement for mutations, not a lock or automatic shutdown.
+`list` warns that it is only a snapshot, even though it does not modify the file.
 
-Have the contact send a non-sensitive test message from the new device. The
-adapter may discover and record its identity during OMEMO processing. Under the
-default strict policy, an untrusted device's direct message is not dispatched
-to Hermes even if decryption succeeds.
+```bash
+python -m omemo_trust --store /actual/path/xmpp_omemo.json list --jid alice@example.org
+```
 
-Do not assume that a refused message necessarily created a store entry. Inspect
-the store and logs. If the identity is missing, investigate device publication,
-the allow-list, and OMEMO initialization instead of inventing a trust entry.
+Output contains the JID, device ID, persisted trust grade and public fingerprint.
+`MISSING` means no trust entry; the CLI refuses to create one. Persisted
+`BLINDLY_TRUSTED` is not necessarily effective trust when BTBV is off. No private
+identity, session or pre-key material is displayed. `list` without `--jid` lists
+all recorded device identities.
 
-Legacy Axolotl bundles publish X25519 identity keys. The conversion from an
-Ed25519 public key loses a sign bit, so the original Ed25519 encoding cannot be
-uniquely recovered from that X25519 value alone. This is not a claim that a
-private key is required to construct possible Edwards counterparts. Use the
-identity encoding actually recorded by the adapter.
-
-## 2. Stop Writers and List Candidates
-
-The repository adapter keeps the store in memory and rewrites the
-JSON file non-atomically on each storage update, not necessarily once per
-message. A live edit can be overwritten, and a concurrent read can encounter
-incomplete JSON. Stop the container before inspecting or modifying the store:
+For your own Docker Compose deployment, first check service, mounts, Python
+environment and store-owner UID/GID. This repository ships no Compose stack.
+An illustrative service named `hermes` with store-owner UID 10000 could use:
 
 ```bash
 docker compose stop hermes
 docker compose ps --all hermes
+docker compose run --rm --no-deps -T --user 10000 --entrypoint python3 hermes -m omemo_trust --store /opt/data/xmpp_omemo.json list --jid alice@example.org
 ```
 
-Confirm that the container is stopped and that no other writer uses its store.
-Then use a temporary maintenance container with the same persistent volume:
+The module must be available in that maintenance container's working directory
+or Python path, and all other writers must also be stopped.
+
+Compare candidates with the published device list using an independent XMPP
+client. An absent identity is not automatically a harmless ghost: investigate
+stale publication, removal, replacement or compromise.
+
+## 3. Independently Verify and Trust
+
+Ask the contact for the new device's **own** fingerprint. Compare through an
+independent authenticated channel, such as in person or a previously verified
+device. An assertion from only the unverified new device is insufficient.
+Confirm the intended JID and device ID and compare all 64 hexadecimal characters.
+The CLI ignores ASCII presentation spaces and letter case, but no other content.
+
+Keep every writer stopped and run as the store owner:
 
 ```bash
-docker compose run --rm --no-deps -T --user 10000 --entrypoint python3 hermes - <<'PY'
-import base64
-import json
-
-JID = "alice@example.org"
-P = 2**255 - 19
-
-
-def fingerprint(key):
-    ed = base64.b64decode(key + "=" * (-len(key) % 4),
-                         altchars=b"-_", validate=True)
-    if len(ed) != 32:
-        raise ValueError("Expected a 32-byte Ed25519 public key")
-    y = int.from_bytes(ed, "little") & ((1 << 255) - 1)
-    if y >= P or y == 1:
-        raise ValueError("Non-canonical or non-convertible Ed25519 key")
-    u = (1 + y) * pow(1 - y, P - 2, P) % P
-    value = u.to_bytes(32, "little").hex().upper()
-    return " ".join(value[i:i + 8] for i in range(0, 64, 8))
-
-
-with open("/opt/data/xmpp_omemo.json", encoding="utf-8") as file:
-    store = json.load(file)
-
-prefix = f"/devices/{JID}/"
-for path, key in sorted(store.items()):
-    if path.startswith(prefix) and path.endswith("/identity_key"):
-        device_id = path[len(prefix):-len("/identity_key")]
-        trust = store.get(f"/trust/{JID}/{key}", "MISSING")
-        print(device_id, trust, key, fingerprint(key))
-PY
+python -m omemo_trust --store /actual/path/xmpp_omemo.json trust --offline --jid alice@example.org --device-id 1001 --fingerprint 'INDEPENDENTLY VERIFIED 64 HEX CHARACTERS'
 ```
 
-As in the companion guide, the formula assumes valid curve points from the
-local store; it is not full validation of untrusted Ed25519 keys.
+Replace the fingerprint placeholder with the independently verified value, not
+simply a value copied from `list`. The CLI requires an existing recorded identity
+and its existing trust entry, converts that public identity, checks the supplied
+fingerprint, and writes only `TRUSTED`. A mismatch or invalid store is an error
+with a nonzero exit status and no store update.
 
-Compare with the currently published server device list using an independent
-XMPP client. A local identity absent from the list is not automatically a
-harmless "ghost": investigate stale publication, removal, replacement, or
-compromise. Do not trust the server list as proof of device ownership.
+Successful mutations create a uniquely named, mode-0600 backup in the store
+directory. **Backups contain the entire store, including secrets.** Protect the
+directory and retain backups only as needed. The replacement preserves store
+UID/GID and permission mode and is atomic on the same filesystem. Symlink store
+files are refused. Atomic replacement does not make edits safe with a running
+adapter, provide a complete power-loss durability guarantee, or preserve custom
+ACLs/extended attributes. Use another maintenance method if those are required.
 
-## 3. Verify the Fingerprint
+Trust is stored per JID and identity, not per device ID. If multiple recorded
+devices share the same identity, changing that trust entry affects all of them.
 
-Ask the contact to read the new device's **own** fingerprint in its client.
-Compare it through an independent authenticated channel, such as an in-person
-comparison or a previously verified device. A fingerprint asserted only by the
-unverified new device is not sufficient.
+## 4. Restart and Verify
 
-After ignoring presentation-only spaces and letter case, all 64 hexadecimal
-characters must match the candidate's derived fingerprint. Also confirm the
-intended JID and device ID. If anything differs, do not grant trust.
-
-## 4. Back Up and Update the Existing Entry
-
-Keep the main container stopped. Replace both example placeholders below with
-the verified candidate's values. The script refuses missing device or trust
-entries, backs up the complete store, and preserves file ownership and mode.
-The maintenance user must match the store owner; UID 10000 is only the example
-deployment assumption above. If the checks fail, investigate ownership rather than relaxing
-permissions or blindly running the command as root.
-
-```bash
-docker compose run --rm --no-deps -T --user 10000 --entrypoint python3 hermes - <<'PY'
-import json
-import os
-from pathlib import Path
-import shutil
-import stat
-import tempfile
-
-p = Path("/opt/data/xmpp_omemo.json")
-JID = "alice@example.org"
-KEY = "<verified_identity_key_b64>"
-DEVICE_ID = "<verified_device_id>"
-GRADE = "TRUSTED"
-
-info = p.stat()
-if info.st_uid != os.geteuid():
-    raise RuntimeError("Run as the store owner")
-with p.open(encoding="utf-8") as file:
-    store = json.load(file)
-
-path = f"/trust/{JID}/{KEY}"
-device_path = f"/devices/{JID}/{DEVICE_ID}/identity_key"
-if path not in store or store.get(device_path) != KEY:
-    raise ValueError("Candidate does not match an existing device and trust entry")
-if GRADE not in {"TRUSTED", "DISTRUSTED"}:
-    raise ValueError("Unsupported grade for this procedure")
-
-# mkstemp creates unique, private files in the same directory as the store.
-fd, backup = tempfile.mkstemp(prefix=p.name + ".backup-", dir=p.parent)
-os.close(fd)
-shutil.copy2(p, backup)
-print("Backup:", backup)
-
-store[path] = GRADE
-fd, temporary = tempfile.mkstemp(prefix=p.name + ".tmp-", dir=p.parent)
-try:
-    with os.fdopen(fd, "w", encoding="utf-8") as file:
-        os.fchown(file.fileno(), info.st_uid, info.st_gid)
-        os.fchmod(file.fileno(), stat.S_IMODE(info.st_mode))
-        json.dump(store, file, indent=2)
-        file.write("\n")
-        file.flush()
-        os.fsync(file.fileno())
-    os.replace(temporary, p)
-finally:
-    if os.path.exists(temporary):
-        os.unlink(temporary)
-print("Updated:", path, "->", GRADE)
-PY
-```
-
-The replacement is atomic on the same filesystem, avoiding a partially written
-JSON file. It is not a complete power-loss durability guarantee and does not
-preserve custom ACLs or extended attributes. If your store uses those, use a
-maintenance method that preserves them. Protect backups: they contain the
-entire OMEMO store, including secret material. Retain them only as needed.
-
-## 5. Restart and Verify Both Directions
-
-Only after the update succeeds:
+Only after success, restart the writers. In the illustrative Compose deployment:
 
 ```bash
 docker compose up -d hermes
-docker compose exec hermes tail -n 100 -f /opt/data/logs/gateway.log
+docker compose logs --follow hermes
 ```
 
-Have the contact send another non-sensitive OMEMO message from the new device,
-then check the reply on that device. Verify that both messages were actually
-OMEMO-encrypted and decrypted, not merely delivered. The repository adapter
-refuses outbound direct-message plaintext fallback while OMEMO is enabled.
-Check new logs for trust/decryption failures and refused encryption. Existing
-historical warnings or warnings about other devices do not by themselves mean
-that this update failed.
+Test non-sensitive OMEMO messages in both directions from the verified device.
+Confirm actual encryption/decryption, not just delivery or absence of warnings.
+Check fresh trust, decryption and refused-encryption logs. Also test an unverified
+device and ordinary plaintext input against the configured policy. Historical
+warnings or warnings for other devices do not prove this update failed.
 
-Also test separately that an
-unverified device and ordinary plaintext messages are handled according to
-that policy. Absence of a log warning is not proof of encryption enforcement.
+## Revocation and Lockout
 
-## Rollback and Lockout
+To revoke, stop all writers again, then:
 
-To revoke this trust decision, stop all writers again and repeat step 4 with
-`GRADE = "DISTRUSTED"`, then restart. Previously delivered or queued messages
-cannot be recalled. Verify the installed adapter's behavior for subsequent
-messages; revocation is not an instantaneous undo of earlier encryption.
+```bash
+python -m omemo_trust --store /actual/path/xmpp_omemo.json distrust --offline --jid alice@example.org --device-id 1001
+```
 
-For lockout, use authenticated host/container administration to repair the
-verified trust entry. `XMPP_REQUIRE_OMEMO_INBOUND=0` is supported, but only
-allows authorized plaintext direct input while OMEMO remains enabled. It does
-not repair device trust or failed decryption, and does not relax outbound
-encryption. It exposes unauthenticated input to server injection; do not use it
-as a trust-repair procedure.
+No fingerprint is required to set an existing identity's trust to `DISTRUSTED`.
+Restart and verify subsequent behavior. Delivered or queued messages cannot be
+recalled; this is not an instantaneous undo of previous encryption.
 
-## Implementation Reference
+For lockout, use authenticated administration to repair verified trust.
+`XMPP_REQUIRE_OMEMO_INBOUND=0` permits authorized plaintext input while OMEMO is
+enabled, but does not repair trust/decryption or relax outbound encryption. It
+exposes input to server injection and is not a trust-repair procedure.
 
-[Repository adapter](../adapter.py) and
-[security policy](../README.md#omemo-security-policy).
-The deployed persistent-volume plugin and dependency versions may differ.
-This runbook was reviewed against repository code and the installed dependency
-sources identified in the companion guide. Its fingerprint calculation was
-checked read-only; the maintenance/update commands have not been executed
-against a live Hermes deployment or real store.
+## References and Limits
+
+See [CLI implementation](../omemo_trust.py), [adapter](../adapter.py), and the
+companion guide's store schema, conversion mathematics and dependency provenance.
+The CLI is covered by temporary-store tests, including public conversion vectors
+and mutation failures. It has not been tested against a live Hermes deployment,
+real store or server bundle. Installed dependency versions may differ.

@@ -41,6 +41,12 @@ mean that all OMEMO clients internally start with an Ed25519 key.
 
 ## Reading an Adapter Store
 
+For routine operations, prefer the tested `python -m omemo_trust` CLI and
+[new-device runbook](omemo-new-device-trust-runbook.md). The CLI uses the existing
+XEdDSA vetted conversion API and requires explicit offline acknowledgement for
+mutations. The formula and read-only snippet below remain a technical reference,
+not the recommended maintenance route.
+
 The checked adapter/dependency combination uses a flat JSON key-value store
 with these paths (see verification provenance below):
 
