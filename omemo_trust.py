@@ -39,8 +39,8 @@ def jid(value):
 
 
 def device_id(value):
-    if not re.fullmatch(r"[1-9][0-9]*", value) or int(value) > 2**31 - 1:
-        raise argparse.ArgumentTypeError("device ID must be a canonical integer from 1 to 2147483647")
+    if not re.fullmatch(r"[1-9][0-9]*", value) or int(value) > 2**32 - 1:
+        raise argparse.ArgumentTypeError("device ID must be a canonical integer from 1 to 4294967295")
     return value
 
 

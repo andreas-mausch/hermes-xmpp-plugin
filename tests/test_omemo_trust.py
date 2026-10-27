@@ -169,7 +169,7 @@ def test_mutation_backup_atomic(store, monkeypatch, capsys, command, grade):
     ["distrust", "--jid", "alice@example.org/resource", "--device-id", "1001", "--offline"],
     ["distrust", "--jid", "alice@example.org", "--device-id", "0", "--offline"],
     ["distrust", "--jid", "alice@example.org", "--device-id", "01", "--offline"],
-    ["distrust", "--jid", "alice@example.org", "--device-id", "2147483648", "--offline"],
+    ["distrust", "--jid", "alice@example.org", "--device-id", "4294967296", "--offline"],
 ])
 def test_parser_rejects_without_writes(store, args):
     before = store.read_bytes()
@@ -202,7 +202,7 @@ def test_invalid_entries_no_writes(store, change):
 
 
 @pytest.mark.parametrize("value", [None, {}, "1001", 1001, [True], [False], ["1001"],
-                                  [1.0], [None], [[]], [0], [-1], [2147483648]])
+                                  [1.0], [None], [[]], [0], [-1], [4294967296]])
 @pytest.mark.parametrize("command", ["list", "trust", "distrust"])
 def test_invalid_device_list_no_writes(store, value, command):
     data = json.loads(store.read_text())
@@ -214,12 +214,29 @@ def test_invalid_device_list_no_writes(store, value, command):
     assert len(list(store.parent.iterdir())) == 1
 
 
-@pytest.mark.parametrize("value", [[], [1], [2147483647], [1001, 2]])
+@pytest.mark.parametrize("value", [[], [1], [2147483647], [2147483648, 4294967295], [1001, 2]])
 def test_valid_device_lists(store, value):
     data = json.loads(store.read_text())
     data[LIST] = value
     store.write_text(json.dumps(data))
     assert invoke(store, "list") == 0
+
+
+@pytest.mark.parametrize("command", ["trust", "distrust"])
+@pytest.mark.parametrize("device", [2147483648, 4294967295])
+def test_remote_uint32_ids_in_whole_store(store, capsys, command, device):
+    data = json.loads(store.read_text())
+    data[LIST] = [4294967295, 1001, 2147483648, 2]
+    for remote in data[LIST]:
+        data[f"/devices/alice@example.org/{remote}/identity_key"] = BASE
+    store.write_text(json.dumps(data))
+    assert invoke(store, "list") == 0
+    rows = capsys.readouterr().out.splitlines()[1:]
+    assert [int(row.split()[1]) for row in rows] == [2, 1001, 2147483648, 4294967295]
+    args = mutation(command)
+    args[args.index("--device-id") + 1] = str(device)
+    assert invoke(store, *args) == 0
+    assert json.loads(store.read_text())[TRUST] == ("TRUSTED" if command == "trust" else "DISTRUSTED")
 
 
 def test_fingerprint_mismatch(store):
