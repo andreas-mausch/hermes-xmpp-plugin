@@ -14,6 +14,7 @@ import omemo_trust as cli
 
 BASE = "WGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmY="
 FP = "09" + "00" * 31
+GROUPED_FP = "09000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000"
 DEVICE = "/devices/alice@example.org/1001/identity_key"
 TRUST = "/trust/alice@example.org/" + BASE
 LIST = "/devices/alice@example.org/list"
@@ -61,11 +62,17 @@ def test_list_snapshot_filter(store, capsys):
     before = store.read_bytes()
     assert invoke(store, "list", "--jid", "alice@example.org") == 0
     out = capsys.readouterr()
-    assert "1001\tUNDECIDED\t09000000" in out.out
+    assert out.out == (
+        "JID                DEVICE_ID  TRUST      FINGERPRINT\n"
+        f"alice@example.org  1001       UNDECIDED  {GROUPED_FP}\n"
+    )
     assert "DO_NOT_DISPLAY" not in out.out + out.err
-    assert "snapshot" in out.err and "ALL writers" in out.err
+    assert out.err == (
+        "Warning: offline snapshot only; live reads may be incomplete or stale. "
+        + cli.OFFLINE_WARNING + "\n"
+    )
     assert invoke(store, "list", "--jid", "bob@example.org") == 0
-    assert "1001" not in capsys.readouterr().out
+    assert capsys.readouterr().out == "JID  DEVICE_ID  TRUST  FINGERPRINT\n"
     assert store.read_bytes() == before
 
 
@@ -77,10 +84,50 @@ def test_list_sorts_device_ids_numerically_within_jid(store, capsys):
     store.write_text(json.dumps(data))
 
     assert invoke(store, "list") == 0
-    rows = [line.split("\t")[:2] for line in capsys.readouterr().out.splitlines()[1:]]
+    rows = [line.split()[:2] for line in capsys.readouterr().out.splitlines()[1:]]
     assert rows == [["alice@example.org", "2"], ["alice@example.org", "10"],
                     ["alice@example.org", "1001"], ["bob@example.org", "1"],
                     ["bob@example.org", "2"]]
+
+
+@pytest.mark.parametrize("bare,expected", [
+    (None, [
+        "JID                           DEVICE_ID   TRUST            FINGERPRINT",
+        "a@b                           2           MISSING          ",
+        "a@b                           10          MISSING          ",
+        "long.person@long.example.org  2147483647  BLINDLY_TRUSTED  ",
+        "mid@example.org               123         TRUSTED          ",
+    ]),
+    ("a@b", [
+        "JID  DEVICE_ID  TRUST    FINGERPRINT",
+        "a@b  2          MISSING  ",
+        "a@b  10         MISSING  ",
+    ]),
+    ("mid@example.org", [
+        "JID              DEVICE_ID  TRUST    FINGERPRINT",
+        "mid@example.org  123        TRUSTED  ",
+    ]),
+    ("absent@example.org", ["JID  DEVICE_ID  TRUST  FINGERPRINT"]),
+])
+def test_list_column_widths_use_only_shown_rows(store, capsys, bare, expected):
+    store.write_text(json.dumps({
+        "/devices/long.person@long.example.org/2147483647/identity_key": BASE,
+        "/trust/long.person@long.example.org/" + BASE: "BLINDLY_TRUSTED",
+        "/devices/a@b/10/identity_key": BASE,
+        "/devices/a@b/2/identity_key": BASE,
+        "/devices/mid@example.org/123/identity_key": BASE,
+        "/trust/mid@example.org/" + BASE: "TRUSTED",
+    }))
+    assert invoke(store, "list", *([] if bare is None else ["--jid", bare])) == 0
+    assert capsys.readouterr().out == "\n".join(
+        line + GROUPED_FP if index else line for index, line in enumerate(expected)
+    ) + "\n"
+
+
+def test_list_empty_store_headers(store, capsys):
+    store.write_text("{}")
+    assert invoke(store, "list") == 0
+    assert capsys.readouterr().out == "JID  DEVICE_ID  TRUST  FINGERPRINT\n"
 
 
 @pytest.mark.parametrize("command,grade", [("trust", "TRUSTED"), ("distrust", "DISTRUSTED")])

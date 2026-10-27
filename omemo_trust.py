@@ -160,13 +160,16 @@ def main(argv=None):
                 if parts[4] == "identity_key":
                     devices[(parts[2], parts[3])] = (value, fingerprint(value))
         if args.command == "list":
-            print("JID\tDEVICE_ID\tTRUST\tFINGERPRINT")
+            rows = [("JID", "DEVICE_ID", "TRUST", "FINGERPRINT")]
             for (bare, device), (identity, fp) in sorted(
                 devices.items(), key=lambda item: (item[0][0], int(item[0][1]))
             ):
                 if args.jid is None or args.jid == bare:
                     grade = store.get(f"/trust/{bare}/{identity}", "MISSING")
-                    print(f"{bare}\t{device}\t{grade}\t{' '.join(fp[i:i+8] for i in range(0, 64, 8))}")
+                    rows.append((bare, device, grade, ' '.join(fp[i:i+8] for i in range(0, 64, 8))))
+            widths = [max(len(value) for value in column) for column in zip(*rows)]
+            for row in rows:
+                print("  ".join(value.ljust(width) for value, width in zip(row, widths)).rstrip())
             return 0
         candidate = devices.get((args.jid, args.device_id))
         if candidate is None:
