@@ -17,14 +17,14 @@ to land. It supports:
 - XEP-0461 threaded message replies
 - XEP-0444 message reactions (e.g., 👀/✅/❌ for processing status)
 - XEP-0447 stateless file sharing for voice messages
-- OMEMO end-to-end encryption (optional, needs slixmpp-omemo)
+- OMEMO end-to-end encryption (enabled by default, needs optional dependencies)
 - cron and `send_message` delivery through a standalone sender hook
 - Hermes platform plugin registration via `ctx.register_platform(...)`
 
 Traffic is encrypted to your XMPP server with TLS. When OMEMO is enabled and
 slixmpp-omemo is installed, 1:1 messages are also end-to-end encrypted so the
-server cannot read content. MUC OMEMO support depends on client/device
-availability.
+server cannot read message bodies. MUC text is sent without OMEMO; encrypted
+media is supported only for 1:1 chats.
 
 ## Credits
 
@@ -56,26 +56,54 @@ hermes gateway restart
 
 ## Configure with env vars
 
-Add these to `~/.hermes/.env` for the active profile:
+Add these to the `.env` in the active profile's resolved Hermes home. This is
+`~/.hermes/.env` for the default home, not necessarily for a named profile or
+custom `HERMES_HOME`:
 
 ```env
 XMPP_JID=hermes@example.org
 XMPP_PASSWORD=your-password
 XMPP_ALLOWED_USERS=sam@example.org
-# Optional:
-XMPP_HOST=example.org
-XMPP_PORT=5222
+# Optional transport, display, room and home-channel settings:
+# XMPP_HOST=example.org
+# XMPP_PORT=5222
 # XMPP_DIRECT_TLS=true   # force XEP-0368 direct TLS; auto-on when XMPP_PORT=5223
 # XMPP_USE_IPV6=false    # disable IPv6 (default: auto-detect a working global v6 route)
 # XMPP_CONNECT_TIMEOUT_SECS=240  # default 180s; raise further on a slow/high-latency link
-XMPP_MUC_ROOMS=room@conference.example.org/hermes
-XMPP_MUC_NICK=hermes
-XMPP_HOME_CHANNEL=sam@example.org
+# XMPP_DISPLAY_NAME=Hermes
+# XMPP_MUC_ROOMS=room@conference.example.org/hermes
+# XMPP_MUC_NICK=hermes
+# XMPP_HOME_CHANNEL=sam@example.org
+
+# OMEMO defaults (no need to set these explicitly):
+# XMPP_OMEMO_ENABLED=true
+# XMPP_OMEMO_BTBV=false
+# XMPP_REQUIRE_OMEMO_INBOUND=1
+# XMPP_OMEMO_MEDIA=true  # follows OMEMO enabled unless explicitly set
+# XMPP_OMEMO_STORAGE_PATH=/path/to/active-profile/xmpp_omemo.json
+# Storage defaults to xmpp_omemo.json in the resolved Hermes home.
 ```
+
+JID/password resolution uses Hermes' active-profile secret scope when available.
+Credential preflight can also read that home's `.env` before dotenv loading;
+under multiplexing, missing scoped credentials do not fall back to the launch
+profile's process environment. This does not make every tuning option
+profile-isolated: several options still read process environment directly.
 
 `XMPP_ALLOWED_USERS` uses bare JIDs. MUC access is gated by room membership: if
 the bot joins a room listed in `XMPP_MUC_ROOMS`, messages in that room are accepted.
-For quick local testing only, set `XMPP_ALLOW_ALL_USERS=true`.
+
+Risky opt-outs, not part of the minimal setup:
+
+- `XMPP_ALLOW_ALL_USERS=true` bypasses the DM allow-list; use only for controlled testing.
+- `XMPP_OMEMO_ENABLED=false` deliberately enables plaintext DMs in both directions.
+- `XMPP_REQUIRE_OMEMO_INBOUND=0` permits authorized plaintext DM input without relaxing outbound encryption.
+- `XMPP_OMEMO_BTBV=true` enables blind trust for devices, not verified trust.
+- `XMPP_OMEMO_MEDIA=false` disables upload sealing, including for MUC media; DM links still use OMEMO when enabled.
+
+See [OMEMO Security Policy](#omemo-security-policy), [Encrypted Media](#encrypted-media)
+and the [new-device trust runbook](docs/omemo-new-device-trust-runbook.md)
+for the security implications and trust setup.
 
 ## Configure with config.yaml
 
@@ -97,22 +125,29 @@ xmpp:
   home_channel: sam@example.org
 ```
 
-Env vars win when both are set.
+There is no blanket environment-first precedence: adapter config/extra values
+generally take precedence over environment fallbacks, including OMEMO settings.
+On single-profile hosts, YAML also fills some unset process variables without
+overwriting existing ones; under multiplexing, those values stay in config/extra.
 
-## OMEMO end-to-end encryption (optional)
+## OMEMO end-to-end encryption
 
-Install the extra dependencies:
+The dependencies are optional to install, but OMEMO is enabled by default.
+Default DM operation requires installed, usable OMEMO dependencies and trusted
+recipient devices; missing dependencies or failed encryption do not cause a
+plaintext fallback. Install the extras into the gateway's Python environment:
 
 ```bash
 uv pip install --python ~/.hermes/hermes-agent/venv/bin/python slixmpp-omemo omemo
 ```
 
-Then set in `~/.hermes/.env`:
+OMEMO needs no explicit enable flag. To customize storage, use the active
+profile's `.env` (replace the illustrative path with that profile's actual home):
 
 ```env
-XMPP_OMEMO_ENABLED=true
-# Optional — defaults to ~/.hermes/xmpp_omemo.json
-XMPP_OMEMO_STORAGE_PATH=/home/fastfinge/.hermes/xmpp_omemo.json
+# XMPP_OMEMO_ENABLED=true  # already the default
+# Optional: defaults to xmpp_omemo.json in the resolved Hermes home
+XMPP_OMEMO_STORAGE_PATH=/path/to/active-profile/xmpp_omemo.json
 ```
 
 Or in `config.yaml`:
@@ -120,7 +155,7 @@ Or in `config.yaml`:
 ```yaml
 xmpp:
   omemo_enabled: true
-  omemo_storage_path: /home/fastfinge/.hermes/xmpp_omemo.json
+  omemo_storage_path: /path/to/active-profile/xmpp_omemo.json
 ```
 
 On first connect, the adapter generates an OMEMO device key and publishes it to
@@ -129,8 +164,11 @@ before sending encrypted messages. If the recipient hasn't published usable,
 trusted device keys yet, direct-message encryption fails closed rather than
 falling back to plaintext.
 
-MUC OMEMO is supported when all participants have compatible devices, but group
-encryption reliability varies by client. 1:1 encryption is the primary use case.
+MUC text is plaintext at the OMEMO layer (still transported over TLS), even when
+OMEMO is enabled. Encrypted media is unsupported in MUCs and fails before upload
+with the default media setting. See [Encrypted Media](#encrypted-media) for the
+explicit plain-upload opt-out and [OMEMO Security Policy](#omemo-security-policy)
+for device trust requirements.
 
 ## Multiple Hermes profiles
 
