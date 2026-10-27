@@ -59,9 +59,12 @@ import json
 import logging
 import mimetypes
 import os
+import secrets
 import sys
 from dataclasses import dataclass
+from io import BytesIO
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 if not _XMPP_DEPS_OK:
@@ -547,6 +550,12 @@ class XmppAdapter(BasePlatformAdapter):
             or extra.get("omemo_storage_path")
             or os.getenv("XMPP_OMEMO_STORAGE_PATH", "")
         ) or str(Path(_hermes_home()) / "xmpp_omemo.json")
+        if isinstance(omemo_cfg, dict) and "media" in omemo_cfg:
+            self._omemo_media = _truthy(omemo_cfg["media"])
+        else:
+            self._omemo_media = _truthy(extra.get(
+                "omemo_media", os.getenv("XMPP_OMEMO_MEDIA", str(self._omemo_enabled))
+            ))
         self._omemo_initialized = asyncio.Event()
         self._omemo_initialized_occurred = False
 
@@ -1715,17 +1724,10 @@ class XmppAdapter(BasePlatformAdapter):
         # Param name must match BasePlatformAdapter.send_video(video_path=...).
         return await self._upload_and_send(chat_id, video_path, caption)
 
-    async def _upload_and_send(
-        self, chat_id: str, path: str, caption: Optional[str]
-    ) -> SendResult:
-        if self.client is None or not getattr(self, "_running", True):
-            return SendResult(success=False, error="xmpp not connected", retryable=True)
-        if "xep_0363" not in self._registered_plugins:
-            return SendResult(
-                success=False,
-                error="xmpp HTTP File Upload (XEP-0363) not available",
-                retryable=False,
-            )
+    async def _plain_upload(self, path: str) -> str:
+        """Upload without sealing when encrypted media is intentionally disabled."""
+        if self.client is None:
+            raise RuntimeError("xmpp not connected")
         content_type, _ = mimetypes.guess_type(path)
         # XEP-0363 upload_file(): `input_file` must be a binary file object
         # (IO[bytes]), never a path string — slixmpp skips its own open()
@@ -1741,19 +1743,63 @@ class XmppAdapter(BasePlatformAdapter):
         }
         if content_type:
             upload_kwargs["content_type"] = content_type
+        upload = self.client["xep_0363"].upload_file
         try:
-            upload = self.client["xep_0363"].upload_file
-            try:
-                url = await upload(**upload_kwargs)
-            except TypeError:
-                upload_kwargs.pop("content_type", None)
-                url = await upload(**upload_kwargs)
+            return await upload(**upload_kwargs)
+        except TypeError:
+            upload_kwargs.pop("content_type", None)
+            return await upload(**upload_kwargs)
+
+    async def _omemo_encrypted_upload(self, path: str) -> str:
+        """Seal bytes with AES-256-GCM and return an XEP-0454 key-bearing URI."""
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        if self.client is None:
+            raise RuntimeError("xmpp not connected")
+        key = secrets.token_bytes(32)
+        iv = secrets.token_bytes(12)
+        sealed = AESGCM(key).encrypt(iv, Path(path).read_bytes(), None)
+        with BytesIO(sealed) as stream:
+            url = await self.client["xep_0363"].upload_file(
+                filename=path, size=len(sealed), content_type="application/octet-stream",
+                input_file=stream,
+            )
+        parts = urlsplit(url)
+        if parts.scheme != "https" or not parts.netloc:
+            raise ValueError("Encrypted media requires an HTTPS upload URL")
+        return urlunsplit(("aesgcm", parts.netloc, parts.path, parts.query, (iv + key).hex()))
+
+    async def _upload_and_send(
+        self, chat_id: str, path: str, caption: Optional[str]
+    ) -> SendResult:
+        if self.client is None or not getattr(self, "_running", True):
+            return SendResult(success=False, error="xmpp not connected", retryable=True)
+        if "xep_0363" not in self._registered_plugins:
+            return SendResult(success=False, error="xmpp HTTP File Upload (XEP-0363) not available")
+        mtype = "groupchat" if self._is_muc(chat_id) else "chat"
+        if self._omemo_media and (
+            mtype != "chat" or not self._omemo_enabled
+            or "xep_0384" not in self._registered_plugins or not SLIXMPP_OMEMO_AVAILABLE
+        ):
+            return SendResult(success=False, error="Encrypted media requires usable 1:1 OMEMO")
+        try:
+            if self._omemo_media:
+                if caption:
+                    result = await self._send_encrypted(chat_id, caption)
+                    if not result.success:
+                        return result
+                url = await self._omemo_encrypted_upload(path)
+                # A key-bearing URI must remain intact and must never use plain send.
+                return await self._send_encrypted_one(chat_id, url)
+            url = await self._plain_upload(path)
         except Exception as exc:
-            logger.exception("xmpp: HTTP upload (XEP-0363) failed")
-            return SendResult(success=False, error=str(exc), retryable=True)
+            # Do not log exception text: it may contain a key-bearing URI.
+            logger.warning("xmpp: media delivery failed (%s)", type(exc).__name__)
+            return SendResult(success=False, error="XMPP media delivery failed", retryable=True)
 
         body = url if not caption else f"{caption}\n{url}"
-        mtype = "groupchat" if self._is_muc(chat_id) else "chat"
+        if self._omemo_enabled and mtype == "chat":
+            return await self.send(chat_id, body)
         try:
             stanza = self.client.send_message(mto=chat_id, mbody=body, mtype=mtype)
             msg_id = None
@@ -1973,25 +2019,14 @@ class XmppAdapter(BasePlatformAdapter):
         # attachment silently never sends.
         if self.client is None or not getattr(self, "_running", True):
             return SendResult(success=False, error="xmpp not connected", retryable=True)
-        if "xep_0447" not in self._registered_plugins or "xep_0363" not in self._registered_plugins:
-            return await self._upload_and_send(chat_id, audio_path, caption=None)
+        if (self._omemo_media or (self._omemo_enabled and not self._is_muc(chat_id))
+                or "xep_0447" not in self._registered_plugins
+                or "xep_0363" not in self._registered_plugins):
+            return await self._upload_and_send(chat_id, audio_path, caption=kwargs.get("caption"))
 
         content_type, _ = mimetypes.guess_type(audio_path)
-        # Same as _upload_and_send(): `input_file` must be a binary stream,
-        # not a path string (issue #10) — pass the full path as `filename`
-        # only and let slixmpp open the file itself.
-        upload_kwargs: Dict[str, Any] = {
-            "filename": audio_path,
-        }
-        if content_type:
-            upload_kwargs["content_type"] = content_type
         try:
-            upload = self.client["xep_0363"].upload_file
-            try:
-                url = await upload(**upload_kwargs)
-            except TypeError:
-                upload_kwargs.pop("content_type", None)
-                url = await upload(**upload_kwargs)
+            url = await self._plain_upload(audio_path)
         except Exception as exc:
             logger.exception("xmpp: HTTP upload for voice failed")
             return SendResult(success=False, error=str(exc), retryable=True)
@@ -2309,6 +2344,8 @@ def _apply_yaml_config(yaml_cfg: dict, xmpp_cfg: dict) -> Optional[dict[str, Any
             omemo_extra["omemo"] = omemo_raw
     if "omemo_enabled" in raw:
         omemo_extra.setdefault("omemo", {})["enabled"] = raw["omemo_enabled"]
+    if "omemo_media" in raw:
+        omemo_extra.setdefault("omemo", {})["media"] = raw["omemo_media"]
     if "omemo_storage_path" in raw:
         omemo_extra.setdefault("omemo", {})["storage_path"] = raw["omemo_storage_path"]
     if omemo_extra:

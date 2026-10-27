@@ -283,3 +283,22 @@ MUC text behavior is unchanged. Legacy OMEMO protects bodies, not all stanza
 metadata: corrections, reactions, typing, retractions and sibling extensions
 are not covered by a blanket authenticity guarantee. Legacy data forms are
 never acted on in OMEMO direct chats, even beside an encrypted body.
+
+## Encrypted Media
+
+`omemo.media` (nested YAML), `omemo_media` (flat YAML/extra), or
+`XMPP_OMEMO_MEDIA` controls XEP-0454 sealed uploads. It defaults to the OMEMO
+enabled setting, so deliberately plaintext installations retain plain uploads.
+Explicitly enabling media requires usable 1:1 OMEMO; MUCs, disabled OMEMO and
+missing plugins fail before upload. Set media false to retain plain MUC media.
+
+Files, images, video and voice are AES-256-GCM sealed before HTTP upload.
+Only ciphertext and its authentication tag reach the upload service. The
+`aesgcm://` URI carries hex-encoded IV followed by key and is sent intact in
+one encrypted body. Captions are separate encrypted messages; failures stop
+delivery. Encryption failures never downgrade to plaintext. When sealing is
+disabled but OMEMO remains enabled, direct-chat links still use OMEMO.
+
+Sealing buffers the file in memory. Upload services still see file names,
+sizes and request metadata. A failure after upload may leave orphan ciphertext;
+delivery is not transactional and a caption can arrive before a failed upload.

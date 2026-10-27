@@ -351,6 +351,84 @@ async def test_omemo_clarify_uses_encrypted_text(adapter_instance):
     a.client.make_message.assert_not_called()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reason", ["muc", "disabled", "plugin", "dependency"])
+async def test_sealed_media_refuses_before_upload(adapter_instance, monkeypatch, reason):
+    a = adapter_instance
+    a._omemo_media = True
+    a._omemo_enabled = reason != "disabled"
+    if reason != "plugin":
+        a._registered_plugins.add("xep_0384")
+    monkeypatch.setattr(adapter, "SLIXMPP_OMEMO_AVAILABLE", reason != "dependency")
+    a._omemo_encrypted_upload = AsyncMock()
+    chat = "room@conference.example.org" if reason == "muc" else "peer@example.org"
+    result = await a.send_document(chat, "missing.file")
+    assert not result.success
+    a._omemo_encrypted_upload.assert_not_called()
+    a.client.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_sealed_upload_roundtrip(adapter_instance, tmp_path):
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from urllib.parse import urlsplit
+    a = adapter_instance
+    path = tmp_path / "secret.bin"
+    path.write_bytes(b"private bytes")
+    uploaded = []
+
+    async def upload(**kwargs):
+        uploaded.append(kwargs["input_file"].read())
+        assert kwargs["size"] == len(uploaded[0])
+        assert kwargs["content_type"] == "application/octet-stream"
+        return "https://upload.example.org/file?token=abc"
+
+    a.client.plugins["xep_0363"] = MagicMock(upload_file=AsyncMock(side_effect=upload))
+    uri = urlsplit(await a._omemo_encrypted_upload(str(path)))
+    material = bytes.fromhex(uri.fragment)
+    assert uri.scheme == "aesgcm"
+    assert uri.query == "token=abc"
+    assert len(material) == 44
+    assert uploaded[0] != path.read_bytes()
+    assert AESGCM(material[12:]).decrypt(material[:12], uploaded[0], None) == path.read_bytes()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("caption_ok", [True, False])
+async def test_sealed_media_caption_and_intact_link(adapter_instance, monkeypatch, caption_ok):
+    a = adapter_instance
+    a._omemo_enabled = a._omemo_media = True
+    a._registered_plugins.add("xep_0384")
+    monkeypatch.setattr(adapter, "SLIXMPP_OMEMO_AVAILABLE", True)
+    a.MAX_MESSAGE_LENGTH = 10
+    uri = "aesgcm://upload.example.org/file#" + "ab" * 44
+    a._send_encrypted = AsyncMock(return_value=adapter.SendResult(success=caption_ok))
+    a._send_encrypted_one = AsyncMock(return_value=adapter.SendResult(success=True))
+    a._omemo_encrypted_upload = AsyncMock(return_value=uri)
+    result = await a.send_document("peer@example.org", "file", caption="caption")
+    assert result.success is caption_ok
+    if caption_ok:
+        a._send_encrypted_one.assert_awaited_once_with("peer@example.org", uri)
+    else:
+        a._omemo_encrypted_upload.assert_not_called()
+        a._send_encrypted_one.assert_not_called()
+    a.client.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_sealing_failure_never_uses_plain_upload(adapter_instance, monkeypatch):
+    a = adapter_instance
+    a._omemo_enabled = a._omemo_media = True
+    a._registered_plugins.add("xep_0384")
+    monkeypatch.setattr(adapter, "SLIXMPP_OMEMO_AVAILABLE", True)
+    a._omemo_encrypted_upload = AsyncMock(side_effect=RuntimeError("seal failed"))
+    a._plain_upload = AsyncMock()
+    result = await a.send_voice("peer@example.org", "file")
+    assert not result.success
+    a._plain_upload.assert_not_called()
+    a.client.send_message.assert_not_called()
+
+
 # -----------------------------------------------------------------
 # Inbound → Event flow
 # -----------------------------------------------------------------

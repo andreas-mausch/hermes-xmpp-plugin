@@ -85,6 +85,21 @@ def test_btbv_requires_opt_in(monkeypatch, raw, expected):
     assert plugin._btbv_enabled is expected
 
 
+@pytest.mark.parametrize("enabled", [True, False])
+def test_media_default_follows_omemo(monkeypatch, enabled):
+    monkeypatch.delenv("XMPP_OMEMO_MEDIA", raising=False)
+    a = adapter.XmppAdapter(Config({"omemo_enabled": enabled}))
+    assert a._omemo_media is enabled
+
+
+def test_media_config_precedence(monkeypatch):
+    monkeypatch.setenv("XMPP_OMEMO_MEDIA", "false")
+    a = adapter.XmppAdapter(Config({"omemo": {"enabled": False, "media": True}}))
+    assert a._omemo_media is True
+    extra = adapter._apply_yaml_config({}, {"omemo_media": True})
+    assert extra["omemo"]["media"] is True
+
+
 def test_apply_yaml_config_seeds_omemo(monkeypatch):
     for name in ["XMPP_JID", "XMPP_PASSWORD", "XMPP_OMEMO_ENABLED", "XMPP_OMEMO_STORAGE_PATH"]:
         monkeypatch.delenv(name, raising=False)
