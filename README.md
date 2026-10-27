@@ -125,8 +125,9 @@ xmpp:
 
 On first connect, the adapter generates an OMEMO device key and publishes it to
 the server. This may take a few seconds — the adapter waits for initialization
-before sending encrypted messages. If the recipient hasn't published device keys
-yet, messages fall back to plaintext (with a log warning).
+before sending encrypted messages. If the recipient hasn't published usable,
+trusted device keys yet, direct-message encryption fails closed rather than
+falling back to plaintext.
 
 MUC OMEMO is supported when all participants have compatible devices, but group
 encryption reliability varies by client. 1:1 encryption is the primary use case.
@@ -292,6 +293,9 @@ gateway stopped, an operator can change the relevant
 after verifying the fingerprint out of band, then restart. `BLINDLY_TRUSTED`
 is accepted only with BTBV enabled, and is not verified trust. Incoming direct
 messages require effective device trust, not just successful decryption.
+
+For operator procedures, see the [fingerprint and trust guide](docs/omemo-fingerprints-and-trust-guide.md)
+and [new-device trust runbook](docs/omemo-new-device-trust-runbook.md).
 
 MUC text behavior is unchanged. Legacy OMEMO protects bodies, not all stanza
 metadata: corrections, reactions, typing, retractions and sibling extensions
