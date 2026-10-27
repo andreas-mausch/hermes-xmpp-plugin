@@ -267,10 +267,21 @@ PYTHONPATH=/path/to/hermes-agent python -m pytest -q
 
 OMEMO is enabled by default. Direct-message bodies, corrections and clarify
 questions fail closed if encryption is unavailable or fails. Plaintext direct
-messages, including bodyless form submissions, are ignored while OMEMO is
-configured. Set `XMPP_OMEMO_ENABLED=false` only to intentionally use plaintext.
+messages, including bodyless form submissions, are ignored by default while
+OMEMO is configured. Set `XMPP_OMEMO_ENABLED=false` only to intentionally use
+plaintext for both directions.
 OMEMO clarifications use numbered encrypted text, not legacy data forms.
 Form submissions in plaintext mode are checked against the allow-list first.
+
+`XMPP_REQUIRE_OMEMO_INBOUND=0` (also `false` or `no`, case-insensitive) allows
+authorized plaintext direct input while OMEMO remains configured. This is an
+inbound-only debugging override: plaintext bodies and bodyless form submissions
+are unauthenticated and can be injected by the server. The default is strict;
+empty or unrecognized values do not disable it. The override does not relax
+outbound encryption, device trust checks, decryption failures or authorization.
+Sibling forms on encrypted direct messages remain ignored, because legacy
+OMEMO does not authenticate them. When OMEMO is disabled, plaintext input
+continues to work regardless of this setting. MUC behavior is unchanged.
 
 New devices are not blindly trusted by default. `XMPP_OMEMO_BTBV=true` opts
 into blind trust. Explicitly `TRUSTED` decisions remain effective. The
@@ -285,7 +296,8 @@ messages require effective device trust, not just successful decryption.
 MUC text behavior is unchanged. Legacy OMEMO protects bodies, not all stanza
 metadata: corrections, reactions, typing, retractions and sibling extensions
 are not covered by a blanket authenticity guarantee. Legacy data forms are
-never acted on in OMEMO direct chats, even beside an encrypted body.
+never acted on beside an encrypted direct-message body, even with the inbound
+plaintext override enabled.
 
 ## Encrypted Media
 

@@ -70,6 +70,10 @@ optional_env:
     description: Blindly trust devices (default false); prior blind trust requires reapproval when off
     prompt: Blind trust before verification? true/false
     password: false
+  - name: XMPP_REQUIRE_OMEMO_INBOUND
+    description: Require encrypted direct input (default true); false allows authorized plaintext input only
+    prompt: Require OMEMO inbound? true/false
+    password: false
   - name: XMPP_OMEMO_MEDIA
     description: Seal uploads with XEP-0454 (defaults to OMEMO enabled); requires usable 1:1 encryption
     prompt: Encrypt media? true/false

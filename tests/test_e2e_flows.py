@@ -269,7 +269,8 @@ def clear_captured():
 
 
 @pytest.mark.asyncio
-async def test_configured_omemo_missing_plugin_refuses_send(adapter_instance):
+async def test_configured_omemo_missing_plugin_refuses_send(adapter_instance, monkeypatch):
+    monkeypatch.setenv("XMPP_REQUIRE_OMEMO_INBOUND", "0")
     a = adapter_instance
     a._omemo_enabled = True
     result = await a.send("peer@example.org", "secret")
@@ -279,10 +280,67 @@ async def test_configured_omemo_missing_plugin_refuses_send(adapter_instance):
 
 
 @pytest.mark.asyncio
-async def test_configured_omemo_rejects_plain_input(adapter_instance):
+@pytest.mark.parametrize("raw,accepted", [
+    (None, False), ("1", False), ("", False), ("invalid", False),
+    ("0", True), (" FALSE ", True), ("no", True),
+])
+async def test_configured_omemo_plain_input_policy(adapter_instance, monkeypatch, raw, accepted):
+    if raw is None:
+        monkeypatch.delenv("XMPP_REQUIRE_OMEMO_INBOUND", raising=False)
+    else:
+        monkeypatch.setenv("XMPP_REQUIRE_OMEMO_INBOUND", raw)
     a = adapter_instance
     a._omemo_enabled = True
     await a._on_message(_make_stanza(type="chat", body="injected", from_jid="peer@example.org"))
+    assert bool(captured_handle_calls) is accepted
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("authorized", [True, False])
+async def test_plain_form_override_keeps_authorization(adapter_instance, monkeypatch, authorized):
+    monkeypatch.setenv("XMPP_REQUIRE_OMEMO_INBOUND", "0")
+    a = adapter_instance
+    a._omemo_enabled = True
+    a.allow_all_users = authorized
+    a.allowed_users = set()
+    a._handle_form_submission = MagicMock(return_value=True)
+    form = MagicMock()
+    form.get.return_value = "submit"
+    await a._on_message(_make_stanza(type="chat", body="", form=form))
+    assert a._handle_form_submission.call_count == int(authorized)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("require_inbound", ["0", "1"])
+async def test_disabled_omemo_keeps_plain_input(adapter_instance, monkeypatch, require_inbound):
+    monkeypatch.setenv("XMPP_REQUIRE_OMEMO_INBOUND", require_inbound)
+    await adapter_instance._on_message(_make_stanza(type="chat", body="plain input"))
+    assert captured_handle_calls[0].text == "plain input"
+
+
+@pytest.mark.asyncio
+async def test_plain_override_keeps_body_authorization(adapter_instance, monkeypatch):
+    monkeypatch.setenv("XMPP_REQUIRE_OMEMO_INBOUND", "0")
+    a = adapter_instance
+    a._omemo_enabled = True
+    a.allow_all_users = False
+    a.allowed_users = set()
+    await a._on_message(_make_stanza(type="chat", body="injected"))
+    assert not captured_handle_calls
+
+
+@pytest.mark.asyncio
+async def test_plain_override_does_not_bypass_decryption_failure(adapter_instance, monkeypatch):
+    monkeypatch.setenv("XMPP_REQUIRE_OMEMO_INBOUND", "0")
+    monkeypatch.setattr(adapter, "SLIXMPP_OMEMO_AVAILABLE", True)
+    a = adapter_instance
+    a._omemo_enabled = True
+    a._registered_plugins.add("xep_0384")
+    plugin = MagicMock()
+    plugin.is_encrypted.return_value = True
+    plugin.decrypt_message = AsyncMock(side_effect=RuntimeError("cannot decrypt"))
+    a.client.plugins["xep_0384"] = plugin
+    await a._on_message(_make_stanza(type="chat", body="unauthenticated fallback"))
     assert not captured_handle_calls
 
 
@@ -320,17 +378,19 @@ async def test_encryption_never_falls_back(adapter_instance, monkeypatch, outcom
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("require_inbound", ["0", "1"])
 @pytest.mark.parametrize("trust,btbv,accepted", [
     ("TRUSTED", False, True), ("BLINDLY_TRUSTED", False, False),
     ("BLINDLY_TRUSTED", True, True), ("UNDECIDED", True, False),
     ("DISTRUSTED", True, False), ("UNKNOWN", True, False),
 ])
-async def test_incoming_device_trust(adapter_instance, monkeypatch, trust, btbv, accepted):
+async def test_incoming_device_trust(adapter_instance, monkeypatch, trust, btbv, accepted, require_inbound):
     from types import SimpleNamespace
     a = adapter_instance
     a._omemo_enabled = True
     a._registered_plugins.add("xep_0384")
     monkeypatch.setenv("XMPP_OMEMO_BTBV", str(btbv))
+    monkeypatch.setenv("XMPP_REQUIRE_OMEMO_INBOUND", require_inbound)
     monkeypatch.setattr(adapter, "SLIXMPP_OMEMO_AVAILABLE", True)
     monkeypatch.setattr(adapter, "TrustLevel", SimpleNamespace(
         TRUSTED=SimpleNamespace(value="TRUSTED"),
@@ -477,10 +537,12 @@ async def test_media_key_encryption_failure_refuses_plaintext(adapter_instance, 
 
 
 @pytest.mark.asyncio
-async def test_legacy_form_beside_encrypted_body_is_not_actionable(adapter_instance, monkeypatch):
+@pytest.mark.parametrize("require_inbound", ["0", "1"])
+async def test_legacy_form_beside_encrypted_body_is_not_actionable(adapter_instance, monkeypatch, require_inbound):
     from types import SimpleNamespace
     a = adapter_instance
     a._omemo_enabled = True
+    monkeypatch.setenv("XMPP_REQUIRE_OMEMO_INBOUND", require_inbound)
     a._registered_plugins.add("xep_0384")
     monkeypatch.setattr(adapter, "SLIXMPP_OMEMO_AVAILABLE", True)
     monkeypatch.setattr(adapter, "TrustLevel", SimpleNamespace(

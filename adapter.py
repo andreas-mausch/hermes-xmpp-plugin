@@ -1125,7 +1125,11 @@ class XmppAdapter(BasePlatformAdapter):
                         logger.warning("OMEMO: failed to decrypt message from %s: %s", from_bare, exc)
                         return
 
-            if self._omemo_enabled and stanza_type != "groupchat" and not decrypted:
+            require_omemo_inbound = os.getenv("XMPP_REQUIRE_OMEMO_INBOUND", "1").strip().lower() not in (
+                "0", "false", "no"
+            )
+            if (self._omemo_enabled and require_omemo_inbound
+                    and stanza_type != "groupchat" and not decrypted):
                 logger.debug("OMEMO: ignoring unencrypted 1:1 stanza from %s", from_bare)
                 return
 
@@ -1153,7 +1157,7 @@ class XmppAdapter(BasePlatformAdapter):
                 pass
 
             # Legacy OMEMO authenticates only the body, not sibling data forms.
-            if form is not None and not (self._omemo_enabled and stanza_type != "groupchat"):
+            if form is not None and not (decrypted and stanza_type != "groupchat"):
                 try:
                     form_type = form.get("type", "")
                 except Exception:
