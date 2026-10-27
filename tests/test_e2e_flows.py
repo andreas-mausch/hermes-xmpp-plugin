@@ -330,7 +330,7 @@ async def test_plain_override_keeps_body_authorization(adapter_instance, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_plain_override_does_not_bypass_decryption_failure(adapter_instance, monkeypatch):
+async def test_plain_override_does_not_bypass_decryption_failure(adapter_instance, monkeypatch, caplog):
     monkeypatch.setenv("XMPP_REQUIRE_OMEMO_INBOUND", "0")
     monkeypatch.setattr(adapter, "SLIXMPP_OMEMO_AVAILABLE", True)
     a = adapter_instance
@@ -338,10 +338,12 @@ async def test_plain_override_does_not_bypass_decryption_failure(adapter_instanc
     a._registered_plugins.add("xep_0384")
     plugin = MagicMock()
     plugin.is_encrypted.return_value = True
-    plugin.decrypt_message = AsyncMock(side_effect=RuntimeError("cannot decrypt"))
+    plugin.decrypt_message = AsyncMock(side_effect=RuntimeError("SECRET_DECRYPTED_PAYLOAD"))
     a.client.plugins["xep_0384"] = plugin
     await a._on_message(_make_stanza(type="chat", body="unauthenticated fallback"))
     assert not captured_handle_calls
+    assert "RuntimeError" in caplog.text
+    assert "SECRET_DECRYPTED_PAYLOAD" not in caplog.text
 
 
 @pytest.mark.asyncio

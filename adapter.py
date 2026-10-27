@@ -1128,7 +1128,7 @@ class XmppAdapter(BasePlatformAdapter):
                             from_bare, device_info.device_id
                         )
                     except Exception as exc:
-                        logger.warning("OMEMO: failed to decrypt message from %s: %s", from_bare, exc)
+                        logger.warning("OMEMO: failed to decrypt message from %s: %s", from_bare, type(exc).__name__)
                         return
 
             require_omemo_inbound = os.getenv("XMPP_REQUIRE_OMEMO_INBOUND", "1").strip().lower() not in (
