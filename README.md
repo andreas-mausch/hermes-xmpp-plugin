@@ -47,7 +47,7 @@ at `d01087a` (upstream HEAD checked on 2026-10-27):
   Available and subscribe presence advertise the name; authorized subscriptions refresh presence.
 - **Documentation and tests:** Updated configuration examples and operator guides explain
   profile paths, precedence, opt-outs, fingerprints, trust and deployment limits.
-  Regression coverage extends the upstream suite from 164 to 312 tests.
+  Regression coverage extends the upstream suite beyond 320 tests.
 
 ## Credits
 
@@ -274,8 +274,9 @@ Clients that support XEP-0394 render this natively. Others get the raw text.
 
 ### Data forms (XEP-0004) for clarify
 
-When Hermes needs clarification, the adapter sends an XEP-0004 data form instead
-of a plain text list. The form includes:
+OMEMO direct-chat clarifications use encrypted numbered text, never sibling
+data forms. In plaintext mode or configured MUC rooms, the adapter can send an
+XEP-0004 data form when the plugin is available. The form includes:
 - A hidden `clarify_id` field
 - A list-single choice field with the available options
 - An "Other (type your own answer)" option for free-form responses
@@ -287,7 +288,16 @@ clients can reply with the number or option text as normal.
 
 When a client does render the form and the user submits it, the adapter reads
 the form response, extracts the `clarify_id` and selected answer, and resolves
-the clarification back to Hermes automatically.
+the clarification back to Hermes only when the pending request belongs to the
+same gateway session. Authorization alone does not grant access to another
+chat's request. Room participant isolation follows Hermes' session policy and
+the same source identity used for ordinary message dispatch (anonymous rooms
+fall back to room identity).
+
+Form responses require Hermes' `tools.clarify_gateway.get_pending` API and the
+base adapter's `_source_session_key` helper. These APIs were inspected in upstream
+Hermes source; older hosts lacking them refuse submissions rather than resolve
+global IDs without an ownership check. Use numbered text replies on such hosts.
 
 **Disabling data forms:** If you prefer to always use plain text clarify
 (never send XEP-0004 forms), set the environment variable
@@ -297,9 +307,11 @@ path even when the `xep_0004` plugin is registered.
 
 ### Voice messages (XEP-0447)
 
-Voice messages from Hermes are sent as XEP-0447 Stateless File Sharing (SFS)
-messages. The file is uploaded via XEP-0363 HTTP upload first, then a lightweight
-SFS reference is sent. This allows clients to preview metadata before downloading.
+With default OMEMO media sealing, voice files are encrypted before XEP-0363
+upload and delivered as an intact XEP-0454 `aesgcm://` link in an encrypted DM
+body, not a plaintext SFS reference. MUC voice uploads fail before upload under
+this default. With sealing explicitly disabled, the plain-upload path can use
+XEP-0447 Stateless File Sharing references for client metadata previews.
 
 Voice calls (Jingle) are not yet supported because slixmpp does not include a
 Jingle RTP implementation.
@@ -333,7 +345,9 @@ messages, including bodyless form submissions, are ignored by default while
 OMEMO is configured. Set `XMPP_OMEMO_ENABLED=false` only to intentionally use
 plaintext for both directions.
 OMEMO clarifications use numbered encrypted text, not legacy data forms.
-Form submissions in plaintext mode are checked against the allow-list first.
+Form submissions in plaintext mode are checked against the allow-list and the
+owning gateway session. Only known/configured MUC rooms receive groupchat
+exemptions, even when `XMPP_ALLOW_ALL_USERS=true`.
 
 `XMPP_REQUIRE_OMEMO_INBOUND=0` (also `false` or `no`, case-insensitive) allows
 authorized plaintext direct input while OMEMO remains configured. This is an
@@ -354,6 +368,14 @@ writers stopped, use the CLI below to set the existing identity's trust to
 is accepted only with BTBV enabled, and is not verified trust. Incoming direct
 messages require effective device trust, not just successful decryption.
 
+BTBV is an outbound trust-decision policy, not automatic inbound approval:
+turning it on does not promote an incoming `UNDECIDED` device. Successfully
+decrypted untrusted DMs are discarded; `UNDECIDED` is persisted for discovery.
+The dependency records real bundle identities before decryption. Discovery
+requires authorization, initialized OMEMO, a published/downloadable bundle and
+usable key material. A decryption failure may leave a recorded identity without
+a trust entry, or no identity at all. No identity is fabricated.
+
 For offline trust maintenance, run the argparse CLI from this repository using
 the adapter's Python environment with the optional OMEMO dependencies installed:
 
@@ -366,8 +388,12 @@ python -m omemo_trust --store /actual/path/xmpp_omemo.json distrust --offline --
 Stop **all writers** first: the adapter caches the store and can overwrite edits.
 `--offline` acknowledges this; it does not detect writers or stop them. `list`
 is only a snapshot and warns about live reads. Trust requires an independently
-verified fingerprint matching an existing identity and trust entry. Mutations
-make a private backup containing secrets and atomically preserve store mode and
+verified fingerprint matching an existing recorded identity. A missing trust
+entry can be created for that identity by either `trust` or `distrust`; missing
+identities are refused. Remote device IDs accept canonical decimal integers
+`1..4294967295` and sort numerically. This unsigned wire/store acceptance does
+not change the dependency's signed-32 local ID generation; zero is excluded.
+Mutations make a private backup containing secrets and atomically preserve store mode and
 ownership; custom ACLs/extended attributes are not preserved. Without `--store`,
 the CLI uses `XMPP_OMEMO_STORAGE_PATH` or `xmpp_omemo.json` under the resolved
 Hermes home. It does not load adapter configuration or `.env`.

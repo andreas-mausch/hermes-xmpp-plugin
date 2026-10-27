@@ -29,10 +29,16 @@ profile and configured path explicitly when needed.
 ## 1. Discover the Identity
 
 Have the contact send a non-sensitive OMEMO test message from the new device.
-The adapter may record its identity during processing, even when strict policy
-prevents dispatch to Hermes. A refused message does not guarantee an entry was
-created. If missing, investigate publication, allow-list and initialization;
-do not invent device or trust entries.
+The dependency records the actual downloaded bundle identity before decryption.
+After successful decryption, the adapter persists an `UNDECIDED` decision for
+an undecided sender and discards the message until effectively trusted. BTBV
+does not automatically approve undecided inbound devices.
+
+A refused message does not guarantee discovery: authorization, initialized
+OMEMO, sender publication, downloadable bundles and usable recipient key
+material are prerequisites. Failures after discovery may leave an identity
+without a trust decision; earlier failures may leave no identity. If missing,
+investigate publication, allow-list and initialization; never invent identities.
 
 Use the identity actually recorded by the adapter. Legacy server bundles publish
 X25519 keys; converting Ed25519 to X25519 loses a sign bit and is not uniquely
@@ -52,10 +58,17 @@ python -m omemo_trust --store /actual/path/xmpp_omemo.json list --jid alice@exam
 ```
 
 Output contains the JID, device ID, persisted trust grade and public fingerprint.
-`MISSING` means no trust entry; the CLI refuses to create one. Persisted
+`MISSING` means no trust entry; the CLI can create a decision for this existing
+identity, but never creates an identity. Persisted
 `BLINDLY_TRUSTED` is not necessarily effective trust when BTBV is off. No private
 identity, session or pre-key material is displayed. `list` without `--jid` lists
 all recorded device identities.
+
+Remote device IDs accept canonical decimal `1..4294967295`, including values
+above the signed-32 maximum, and are listed in numeric order. Zero, negative
+values, leading zeros and values above the unsigned-32 maximum are refused.
+This is remote wire/store compatibility, not a change to own-device generation:
+OMEMO:2 setup and the installed dependency generate positive signed-32 IDs.
 
 For your own Docker Compose deployment, first check service, mounts, Python
 environment and store-owner UID/GID. This repository ships no Compose stack.
@@ -90,7 +103,7 @@ python -m omemo_trust --store /actual/path/xmpp_omemo.json trust --offline --jid
 
 Replace the fingerprint placeholder with the independently verified value, not
 simply a value copied from `list`. The CLI requires an existing recorded identity
-and its existing trust entry, converts that public identity, checks the supplied
+with or without a trust entry, converts that public identity, checks the supplied
 fingerprint, and writes only `TRUSTED`. A mismatch or invalid store is an error
 with a nonzero exit status and no store update.
 
