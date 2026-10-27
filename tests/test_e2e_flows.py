@@ -320,13 +320,17 @@ async def test_encryption_never_falls_back(adapter_instance, monkeypatch, outcom
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("trust,accepted", [("TRUSTED", True), ("BLINDLY_TRUSTED", True),
-                                          ("UNDECIDED", False), ("DISTRUSTED", False)])
-async def test_incoming_device_trust(adapter_instance, monkeypatch, trust, accepted):
+@pytest.mark.parametrize("trust,btbv,accepted", [
+    ("TRUSTED", False, True), ("BLINDLY_TRUSTED", False, False),
+    ("BLINDLY_TRUSTED", True, True), ("UNDECIDED", True, False),
+    ("DISTRUSTED", True, False), ("UNKNOWN", True, False),
+])
+async def test_incoming_device_trust(adapter_instance, monkeypatch, trust, btbv, accepted):
     from types import SimpleNamespace
     a = adapter_instance
     a._omemo_enabled = True
     a._registered_plugins.add("xep_0384")
+    monkeypatch.setenv("XMPP_OMEMO_BTBV", str(btbv))
     monkeypatch.setattr(adapter, "SLIXMPP_OMEMO_AVAILABLE", True)
     monkeypatch.setattr(adapter, "TrustLevel", SimpleNamespace(
         TRUSTED=SimpleNamespace(value="TRUSTED"),
@@ -427,6 +431,72 @@ async def test_sealing_failure_never_uses_plain_upload(adapter_instance, monkeyp
     assert not result.success
     a._plain_upload.assert_not_called()
     a.client.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["missing", "none", "exception"])
+async def test_omemo_edit_failure_refuses_plaintext(adapter_instance, monkeypatch, failure):
+    a = adapter_instance
+    a._omemo_enabled = True
+    a._registered_plugins.add("xep_0308")
+    monkeypatch.setattr(adapter, "SLIXMPP_OMEMO_AVAILABLE", True)
+    correction = MagicMock()
+    a.client.plugins["xep_0308"] = MagicMock()
+    a.client.plugins["xep_0308"].build_correction.return_value = correction
+    if failure != "missing":
+        a._registered_plugins.add("xep_0384")
+        plugin = MagicMock()
+        plugin.encrypt_message = AsyncMock(
+            return_value=(None, {}),
+            side_effect=RuntimeError("failed") if failure == "exception" else None,
+        )
+        a.client.plugins["xep_0384"] = plugin
+    result = await a.edit_message("peer@example.org", "original", "secret edit")
+    assert not result.success
+    correction.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["none", "exception"])
+async def test_media_key_encryption_failure_refuses_plaintext(adapter_instance, monkeypatch, failure):
+    a = adapter_instance
+    a._omemo_enabled = a._omemo_media = True
+    a._registered_plugins.add("xep_0384")
+    monkeypatch.setattr(adapter, "SLIXMPP_OMEMO_AVAILABLE", True)
+    a._omemo_encrypted_upload = AsyncMock(return_value="aesgcm://upload.example.org/file#secret")
+    plugin = MagicMock()
+    plugin.encrypt_message = AsyncMock(
+        return_value=(None, {}),
+        side_effect=RuntimeError("failed") if failure == "exception" else None,
+    )
+    a.client.plugins["xep_0384"] = plugin
+    result = await a.send_image_file("peer@example.org", "file")
+    assert not result.success
+    a.client.send_message.assert_not_called()
+    a.client.make_message.return_value.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_legacy_form_beside_encrypted_body_is_not_actionable(adapter_instance, monkeypatch):
+    from types import SimpleNamespace
+    a = adapter_instance
+    a._omemo_enabled = True
+    a._registered_plugins.add("xep_0384")
+    monkeypatch.setattr(adapter, "SLIXMPP_OMEMO_AVAILABLE", True)
+    monkeypatch.setattr(adapter, "TrustLevel", SimpleNamespace(
+        TRUSTED=SimpleNamespace(value="TRUSTED")))
+    form = MagicMock()
+    form.get.return_value = "submit"
+    plugin = MagicMock()
+    plugin.is_encrypted.return_value = True
+    plugin.decrypt_message = AsyncMock(return_value=(
+        _make_stanza(body="authenticated text", form=form),
+        SimpleNamespace(trust_level_name="TRUSTED", device_id=1)))
+    a.client.plugins["xep_0384"] = plugin
+    a._handle_form_submission = MagicMock()
+    await a._on_message(_make_stanza(type="chat", form=form))
+    a._handle_form_submission.assert_not_called()
+    assert captured_handle_calls[0].text == "authenticated text"
 
 
 # -----------------------------------------------------------------

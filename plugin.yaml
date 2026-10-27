@@ -67,7 +67,7 @@ optional_env:
     prompt: OMEMO storage path
     password: false
   - name: XMPP_OMEMO_BTBV
-    description: Blindly trust new devices (default false); existing trust is preserved
+    description: Blindly trust devices (default false); prior blind trust requires reapproval when off
     prompt: Blind trust before verification? true/false
     password: false
   - name: XMPP_OMEMO_MEDIA

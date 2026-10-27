@@ -273,12 +273,14 @@ OMEMO clarifications use numbered encrypted text, not legacy data forms.
 Form submissions in plaintext mode are checked against the allow-list first.
 
 New devices are not blindly trusted by default. `XMPP_OMEMO_BTBV=true` opts
-into blind trust; existing persisted decisions remain unchanged. With the
+into blind trust. Explicitly `TRUSTED` decisions remain effective. The
+dependency treats `BLINDLY_TRUSTED` as undecided when BTBV is off; outbound
+manual-trust handling can mark such devices `DISTRUSTED`. With the
 gateway stopped, an operator can change the relevant
 `/trust/<bare-jid>/<identity-key>` entry in `xmpp_omemo.json` to `TRUSTED`
 after verifying the fingerprint out of band, then restart. `BLINDLY_TRUSTED`
-is also accepted, but is not verified trust. Incoming direct messages require
-a persisted trusted or blindly trusted device, not just successful decryption.
+is accepted only with BTBV enabled, and is not verified trust. Incoming direct
+messages require effective device trust, not just successful decryption.
 
 MUC text behavior is unchanged. Legacy OMEMO protects bodies, not all stanza
 metadata: corrections, reactions, typing, retractions and sibling extensions
