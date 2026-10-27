@@ -206,6 +206,65 @@ def _make_stanza(**fields):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("sender,mtype,owner,accepted", [
+    ("alice@example.org/phone", "chat", ("dm", "alice@example.org", "alice@example.org"), True),
+    ("bob@example.org/phone", "chat", ("dm", "alice@example.org", "alice@example.org"), False),
+    ("room@conference.example.org/alice", "groupchat",
+     ("group", "room@conference.example.org", "alice@example.org"), True),
+    ("room@conference.example.org/bob", "groupchat",
+     ("group", "room@conference.example.org", "alice@example.org"), False),
+    ("room@conference.example.org/alice", "groupchat",
+     ("group", "other@conference.example.org", "alice@example.org"), False),
+])
+async def test_form_response_bound_to_source_session(adapter_instance, monkeypatch, caplog,
+                                                    sender, mtype, owner, accepted):
+    import types
+    from slixmpp.stanza import Message
+    from slixmpp.plugins.xep_0004.stanza import Form
+    from slixmpp.xmlstream import register_stanza_plugin
+    register_stanza_plugin(Message, Form)
+    a = adapter_instance
+    a._omemo_enabled = False
+    a.allow_all_users = True
+    a.build_source = lambda **kw: types.SimpleNamespace(**kw)
+    if mtype == "groupchat":
+        a._muc_real_jid = lambda stanza: stanza.get_from().resource + "@example.org"
+    # Opaque keys returned by the host API; adapter must not construct them.
+    def key(source):
+        return "opaque-owner" if (source.chat_type, source.chat_id, source.user_id) == owner else "opaque-other"
+    a._source_session_key = key
+    resolver = MagicMock(return_value=True)
+    module = types.ModuleType("tools.clarify_gateway")
+    module.get_pending = lambda cid: types.SimpleNamespace(session_key="opaque-owner")
+    module.resolve_gateway_clarify = resolver
+    monkeypatch.setitem(sys.modules, "tools.clarify_gateway", module)
+    stanza = Message()
+    stanza["from"], stanza["type"] = sender, mtype
+    stanza["form"]["type"] = "submit"
+    stanza["form"].add_field(var="clarify_id", value="SECRET_PROMPT_ID")
+    stanza["form"].add_field(var="answer", value="SECRET_ANSWER")
+    await a._on_message(stanza)
+    assert bool(resolver.call_count) is accepted
+    assert not captured_handle_calls
+    assert "SECRET_PROMPT_ID" not in caplog.text
+    assert "SECRET_ANSWER" not in caplog.text
+
+
+def test_forms_fail_closed_without_session_api(adapter_instance, monkeypatch, caplog):
+    import types
+    module = types.ModuleType("tools.clarify_gateway")
+    module.resolve_gateway_clarify = MagicMock()
+    monkeypatch.setitem(sys.modules, "tools.clarify_gateway", module)
+    form = MagicMock()
+    form.get_fields.return_value = {}
+    form.get_values.return_value = {"clarify_id": "SECRET_ID", "answer": "SECRET_ANSWER"}
+    assert adapter_instance._handle_form_submission(form, types.SimpleNamespace())
+    module.resolve_gateway_clarify.assert_not_called()
+    assert "SECRET_ID" not in caplog.text
+    assert "SECRET_ANSWER" not in caplog.text
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("sender,accepted", [
     ("attacker@example.org/phone", False),
     ("unknown@conference.example.org/nick", False),

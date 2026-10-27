@@ -1173,9 +1173,10 @@ class XmppAdapter(BasePlatformAdapter):
                 if form_type == "submit":
                     resolved = self._handle_form_submission(
                         form=form,
-                        from_bare=from_bare,
-                        from_resource=from_resource,
-                        stanza_type=stanza_type,
+                        source=self.build_source(
+                            chat_id=from_bare, chat_type=chat_type, user_id=user_id,
+                            user_name=(from_resource or None) if chat_type == "group" else None,
+                        ),
                     )
                     if resolved:
                         return
@@ -1249,9 +1250,7 @@ class XmppAdapter(BasePlatformAdapter):
     def _handle_form_submission(
         self,
         form: Any,
-        from_bare: str,
-        from_resource: str,
-        stanza_type: str,
+        source: Any,
     ) -> bool:
         """Process an inbound XEP-0004 form submission (type="submit").
 
@@ -1291,23 +1290,20 @@ class XmppAdapter(BasePlatformAdapter):
             if answer == "__other__":
                 answer = ""
 
-            from tools.clarify_gateway import resolve_gateway_clarify
-            resolved = resolve_gateway_clarify(str(clarify_id), str(answer))
-            if resolved:
-                logger.debug(
-                    "xmpp: resolved clarify %s from form submission by %s",
-                    clarify_id, from_bare,
-                )
+            from tools.clarify_gateway import get_pending, resolve_gateway_clarify
+            # Use the gateway's routing policy, including participant/profile isolation.
+            if getattr(source, "profile_route_rejected", False):
                 return True
-            else:
-                logger.debug(
-                    "xmpp: form submission for unknown/expired clarify %s from %s",
-                    clarify_id, from_bare,
-                )
-                return True  # Still consume the message — don't double-route
-        except Exception:
-            logger.exception("xmpp: error processing form submission")
-            return False
+            entry = get_pending(str(clarify_id))
+            session_key = self._source_session_key(source)
+            if (entry is None or not isinstance(session_key, str) or not session_key
+                    or entry.session_key != session_key):
+                return True
+            resolve_gateway_clarify(str(clarify_id), str(answer))
+            return True  # Consume expired/raced submissions too; do not double-route.
+        except Exception as exc:
+            logger.warning("xmpp: form submission refused (%s)", type(exc).__name__)
+            return True
 
     def _muc_real_jid(self, stanza: Any) -> Optional[str]:
         try:

@@ -548,7 +548,7 @@ async def test_send_clarify_falls_back_to_text_when_forms_disabled(fake_adapter,
 # ------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_on_message_handles_form_submission(fake_adapter, fake_client):
+async def test_on_message_handles_form_submission(fake_adapter, fake_client, monkeypatch):
     """When a submitted XEP-0004 form arrives, _on_message should extract
     clarify_id + answer and resolve the clarify instead of dropping it."""
 
@@ -591,6 +591,10 @@ async def test_on_message_handles_form_submission(fake_adapter, fake_client):
     cg_mod = _sys.modules.get("tools.clarify_gateway")
     assert cg_mod is not None, "tools.clarify_gateway not in sys.modules"
     cg_mod.resolve_gateway_clarify = fake_resolve
+    from types import SimpleNamespace
+    monkeypatch.setattr(cg_mod, "get_pending", lambda cid: SimpleNamespace(session_key="owner-session"))
+    monkeypatch.setattr(fake_adapter, "_source_session_key", lambda source: "owner-session", raising=False)
+    monkeypatch.setattr(fake_adapter, "build_source", lambda **kw: SimpleNamespace(**kw), raising=False)
 
     fake_adapter.allow_all_users = True
 
