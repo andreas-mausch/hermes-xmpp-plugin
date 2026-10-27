@@ -559,6 +559,17 @@ class XmppAdapter(BasePlatformAdapter):
         self._omemo_initialized = asyncio.Event()
         self._omemo_initialized_occurred = False
 
+        self._display_name = str(
+            extra.get("display_name") or os.getenv("XMPP_DISPLAY_NAME", "")
+        ).strip()
+        if not self._display_name:
+            try:
+                self._display_name = (Path(_hermes_home()) / "xmpp_display_name").read_text(
+                    encoding="utf-8"
+                ).strip()
+            except (OSError, UnicodeError):
+                pass
+
         # True only for the one-shot send_xmpp_message() path: connect as an
         # ephemeral second resource without taking (or releasing) the
         # per-account scoped lock held by the running gateway.
@@ -738,6 +749,18 @@ class XmppAdapter(BasePlatformAdapter):
         client.roster.auto_authorize = False
         client.roster.auto_subscribe = False
         client.add_event_handler("presence_subscribe", self._on_subscribe)
+        client.add_event_handler("presence_subscribed", self._on_subscribed)
+        if self._display_name:
+            def _presence_nick_filter(stanza):
+                if stanza.name == "presence" and stanza.get("type") in ("", "available", "subscribe", None):
+                    from slixmpp.xmlstream import ET
+
+                    tag = "{http://jabber.org/protocol/nick}nick"
+                    if stanza.xml.find(tag) is None:
+                        ET.SubElement(stanza.xml, tag).text = self._display_name
+                return stanza
+
+            client.add_filter("out_sync", _presence_nick_filter)
 
         self.client = client
         self._session_ready = asyncio.Event()
@@ -980,9 +1003,21 @@ class XmppAdapter(BasePlatformAdapter):
         try:
             self.client.send_presence(pto=requester, ptype="subscribed")
             self.client.send_presence(pto=requester, ptype="subscribe")
+            self.client.send_presence()
             logger.info("xmpp: approved presence subscription for %s", requester)
         except Exception:
             logger.debug("xmpp: failed to approve subscription for %s", requester, exc_info=True)
+
+    async def _on_subscribed(self, presence: Any) -> None:
+        """Refresh available presence after an authorized subscription approval."""
+        if self.client is None:
+            return
+        try:
+            peer = self._bare(str(presence.get_from()))
+            if self.allow_all_users or peer in self.allowed_users:
+                self.client.send_presence()
+        except Exception:
+            logger.debug("xmpp: subscription presence refresh failed", exc_info=True)
 
     async def _on_disconnected(self, _event: Any) -> None:
         self._session_established = False
@@ -2332,6 +2367,7 @@ def _apply_yaml_config(yaml_cfg: dict, xmpp_cfg: dict) -> Optional[dict[str, Any
     for key in (
         "jid", "password", "host", "port", "direct_tls", "connect_timeout_secs",
         "muc_rooms", "muc_nick", "allowed_users", "allow_all_users", "max_message_length",
+        "display_name",
     ):
         if key in raw and key not in extra:
             extra[key] = raw[key]
@@ -2363,6 +2399,7 @@ def _apply_yaml_config(yaml_cfg: dict, xmpp_cfg: dict) -> Optional[dict[str, Any
         "allowed_users": "XMPP_ALLOWED_USERS",
         "allow_all_users": "XMPP_ALLOW_ALL_USERS",
         "home_channel": "XMPP_HOME_CHANNEL",
+        "display_name": "XMPP_DISPLAY_NAME",
     }
     # Boolean flags: set env from yaml/config if the env isn't already set.
     if not os.getenv("XMPP_DISABLE_CLARIFY_FORMS"):

@@ -208,6 +208,7 @@ class _FakeSlixmppClient:
         self.plugins = {}
         self.roster = _FakeRoster()
         self.handlers = {}
+        self.filters = {}
         self.disconnected = asyncio.get_event_loop().create_future()
         self.connect_calls = []
         self.enable_starttls = None
@@ -220,6 +221,9 @@ class _FakeSlixmppClient:
 
     def add_event_handler(self, name, handler):
         self.handlers.setdefault(name, []).append(handler)
+
+    def add_filter(self, name, handler):
+        self.filters[name] = handler
 
     def connect(self, *a, **k):
         self.connect_calls.append((a, k))
@@ -271,6 +275,65 @@ def _reset_state():
 # -----------------------------------------------------------------
 # connect() returns immediately — it does not block on session establishment
 # -----------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_display_name_presence_filter(monkeypatch):
+    from slixmpp.stanza import Presence, Message
+    from slixmpp.xmlstream import ET
+    a = adapter.XmppAdapter(_make_cfg(display_name="Hermes"))
+    monkeypatch.setattr(adapter, "ClientXMPP", _FakeSlixmppClient)
+    assert await a.connect()
+    try:
+        stamp = a.client.filters["out_sync"]
+        tag = "{http://jabber.org/protocol/nick}nick"
+        for kind in ("available", "subscribe"):
+            presence = Presence()
+            presence["type"] = kind
+            assert stamp(presence) is presence
+            assert presence.xml.find(tag).text == "Hermes"
+            stamp(presence)
+            assert len(presence.xml.findall(tag)) == 1
+        for kind in ("unavailable", "probe", "subscribed", "unsubscribe"):
+            presence = Presence()
+            presence["type"] = kind
+            assert stamp(presence).xml.find(tag) is None
+        presence = Presence()
+        ET.SubElement(presence.xml, tag).text = "Existing"
+        assert stamp(presence).xml.find(tag).text == "Existing"
+        assert stamp(Message()).xml.find(tag) is None
+    finally:
+        await a.disconnect()
+
+
+def test_display_name_sources(monkeypatch, tmp_path):
+    monkeypatch.setattr(adapter, "_hermes_home", lambda: str(tmp_path))
+    monkeypatch.delenv("XMPP_DISPLAY_NAME", raising=False)
+    assert adapter.XmppAdapter(_make_cfg())._display_name == ""
+    (tmp_path / "xmpp_display_name").write_text(" File Name\n", encoding="utf-8")
+    assert adapter.XmppAdapter(_make_cfg())._display_name == "File Name"
+    monkeypatch.setenv("XMPP_DISPLAY_NAME", "Env Name")
+    assert adapter.XmppAdapter(_make_cfg())._display_name == "Env Name"
+    assert adapter.XmppAdapter(_make_cfg(display_name="Extra Name"))._display_name == "Extra Name"
+    extra = adapter._apply_yaml_config({}, {"display_name": "YAML Name"})
+    assert extra["display_name"] == "YAML Name"
+    monkeypatch.delenv("XMPP_DISPLAY_NAME")
+    (tmp_path / "xmpp_display_name").write_bytes(b"\xff")
+    assert adapter.XmppAdapter(_make_cfg())._display_name == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("allowed", [True, False])
+async def test_subscription_refresh_is_authorized(allowed):
+    a = adapter.XmppAdapter(_make_cfg())
+    a.client = MagicMock()
+    a.allowed_users = {"peer@example.org"} if allowed else set()
+    presence = MagicMock()
+    presence.get_from.return_value = "peer@example.org/mobile"
+    await a._on_subscribed(presence)
+    assert a.client.send_presence.call_count == int(allowed)
+    a.client.send_presence.reset_mock()
+    await a._on_subscribe(presence)
+    assert a.client.send_presence.call_count == (3 if allowed else 0)
 
 @pytest.mark.asyncio
 async def test_connect_returns_true_immediately_without_session_start(monkeypatch):

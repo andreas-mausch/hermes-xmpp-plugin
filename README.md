@@ -262,7 +262,8 @@ For testing against a real Hermes checkout, set `PYTHONPATH`:
 ```bash
 PYTHONPATH=/path/to/hermes-agent python -m pytest -q
 ```
-# OMEMO Security Policy
+
+## OMEMO Security Policy
 
 OMEMO is enabled by default. Direct-message bodies, corrections and clarify
 questions fail closed if encryption is unavailable or fails. Plaintext direct
@@ -302,3 +303,16 @@ disabled but OMEMO remains enabled, direct-chat links still use OMEMO.
 Sealing buffers the file in memory. Upload services still see file names,
 sizes and request metadata. A failure after upload may leave orphan ciphertext;
 delivery is not transactional and a caption can arrive before a failed upload.
+
+## Display Name
+
+Set `display_name` in XMPP YAML/extra or `XMPP_DISPLAY_NAME` to advertise a
+XEP-0172 nickname in available and subscribe presence. Extra takes precedence
+over environment. If neither supplies a nonblank name, the adapter reads
+the UTF-8 file `xmpp_display_name` in Hermes home (resolved by `hermes_home`).
+Missing or unreadable files are ignored. Existing nickname elements are kept;
+unavailable, probe and subscription-approval stanzas are not stamped.
+
+Presence is refreshed after authorized subscription requests or approvals.
+Clients may require mutual presence subscriptions to display the nickname;
+this does not change the account JID, MUC nickname or vCard.
