@@ -344,6 +344,124 @@ def test_mime_content_not_filename(data, mime):
     assert content_type(data)[0] == mime
 
 
+def bmff_box(kind, payload=b"", *, extended=False, zero=False):
+    if zero:
+        return b"\0" * 4 + kind + payload
+    if extended:
+        return b"\0\0\0\1" + kind + (16 + len(payload)).to_bytes(8, "big") + payload
+    return (8 + len(payload)).to_bytes(4, "big") + kind + payload
+
+
+def bmff_track(handler, *, extended=False):
+    data = bmff_box(b"hdlr", b"\0" * 8 + handler + b"\0" * 12, extended=extended)
+    return bmff_box(b"trak", bmff_box(b"mdia", data, extended=extended), extended=extended)
+
+
+@pytest.mark.parametrize("handlers,audio", [
+    ([b"soun"], True), ([b"soun", b"soun"], True), ([b"vide"], False),
+    ([b"soun", b"vide"], False), ([b"vide", b"soun"], False),
+    ([b"soun", b"text"], False), ([], False),
+])
+@pytest.mark.parametrize("extended,zero", [(False, False), (True, False), (False, True)])
+def test_mp4_track_detection(tmp_path, handlers, audio, extended, zero):
+    data = (bmff_box(b"ftyp", b"isom\0\0\0\0isom", extended=extended)
+            + bmff_box(b"mdat", b"x" * 9000, extended=extended)
+            + bmff_box(b"moov", b"".join(bmff_track(h, extended=extended) for h in handlers),
+                       extended=extended, zero=zero))
+    path = tmp_path / "untrusted.m4a"
+    path.write_bytes(data)
+    with path.open("rb") as source:
+        source.seek(123)
+        assert content_type(data[:8192], fd=source.fileno()) == (
+            ("audio/mp4", ".m4a") if audio else ("video/mp4", ".mp4"))
+        assert source.tell() == 123
+
+
+@pytest.mark.parametrize("tail", [
+    b"bad", b"\0\0\0\x07free", b"\0\0\0\x40free", b"\0\0\0\1free",
+    b"\0\0\0\1free" + (2**64 - 1).to_bytes(8, "big"),
+    bmff_box(b"moov", bmff_box(b"trak")),
+    bmff_box(b"moov", bmff_box(b"trak", bmff_box(b"mdia", bmff_box(b"hdlr", b"\0" * 8 + b"soun")))),
+    bmff_box(b"moov", bmff_track(b"soun") + bmff_box(b"trak", bmff_box(b"mdia"))),
+    bmff_box(b"moov", bmff_track(b"soun")) + b"bad",
+    bmff_box(b"moov", bmff_track(b"soun")) * 2,
+    bmff_box(b"moov", bmff_box(b"trak", bmff_box(b"mdia",
+        bmff_box(b"hdlr", b"\0" * 8 + b"soun" + b"\0" * 12) * 2))),
+    bmff_box(b"moov", bmff_box(b"trak", bmff_box(b"mdia", bmff_box(b"moov", bmff_track(b"soun"))))),
+    bmff_box(b"free") * 1024 + bmff_box(b"moov", bmff_track(b"soun")),
+])
+def test_mp4_malformed_or_over_budget_never_audio(tmp_path, tail):
+    data = bmff_box(b"ftyp", b"M4A \0\0\0\0") + tail
+    path = tmp_path / "audio.m4a"
+    path.write_bytes(data)
+    with path.open("rb") as source:
+        assert content_type(data[:8192], fd=source.fileno()) == ("video/mp4", ".mp4")
+
+
+def test_mp4_scan_read_bounds(tmp_path, monkeypatch):
+    import inbound_media
+    data = (bmff_box(b"ftyp", b"isom\0\0\0\0") + bmff_box(b"free") * 2000
+            + bmff_box(b"moov", bmff_track(b"soun")))
+    path = tmp_path / "media"
+    path.write_bytes(data)
+    pread = os.pread
+    reads = []
+
+    def bounded(fd, size, offset):
+        reads.append(size)
+        assert size <= 24
+        return pread(fd, size, offset)
+
+    monkeypatch.setattr(inbound_media.os, "pread", bounded)
+    with path.open("rb") as source:
+        assert content_type(data[:8192], fd=source.fileno())[0] == "video/mp4"
+    assert len(reads) == 1024
+    assert sum(reads) <= 40 * 1024
+
+
+@pytest.mark.parametrize("ftyp,mime", [
+    (bmff_box(b"ftyp", b"zzzz\0\0\0\0"), "application/octet-stream"),
+    (bmff_box(b"ftyp", b"isom"), "video/mp4"),
+    (bmff_box(b"ftyp", b"isom\0\0\0\0x"), "video/mp4"),
+])
+def test_mp4_unknown_or_malformed_brand_not_promoted(tmp_path, ftyp, mime):
+    data = ftyp + bmff_box(b"moov", bmff_track(b"soun"))
+    path = tmp_path / "audio.m4a"
+    path.write_bytes(data)
+    with path.open("rb") as source:
+        assert content_type(data[:8192], fd=source.fileno())[0] == mime
+
+
+@pytest.mark.parametrize("authenticated", [True, False])
+@pytest.mark.asyncio
+async def test_encrypted_mp4_classified_only_after_authentication(cache, network, monkeypatch, authenticated):
+    import inbound_media
+    plain = (bmff_box(b"ftyp", b"isom\0\0\0\0") + bmff_box(b"mdat", b"aac")
+             + bmff_box(b"moov", bmff_track(b"soun")))
+    network["data"] = AESGCM(KEY).encrypt(IV, plain, None)
+    if not authenticated:
+        network["data"] = network["data"][:-1] + bytes([network["data"][-1] ^ 1])
+    original = inbound_media.content_type
+    calls = []
+
+    def classify(data, *, fd=None):
+        calls.append(fd)
+        assert fd is not None and os.pread(fd, len(plain), 0) == plain
+        assert not list(cache.root.glob("*.m4a"))
+        return original(data, fd=fd)
+
+    monkeypatch.setattr(inbound_media, "content_type", classify)
+    if authenticated:
+        path, mime = await cache.fetch(URI.replace("/item#", "/video.mp4#"))
+        assert mime == "audio/mp4" and Path(path).suffix == ".m4a"
+        assert Path(path).read_bytes() == plain
+        assert len(calls) == 1
+    else:
+        with pytest.raises(MediaError):
+            await cache.fetch(URI)
+        assert calls == [] and not list(cache.root.iterdir())
+
+
 @pytest.mark.asyncio
 async def test_queued_time_counts_toward_deadline(cache, network):
     network["gate"] = asyncio.Event()

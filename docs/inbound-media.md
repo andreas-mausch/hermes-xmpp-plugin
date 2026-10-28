@@ -68,6 +68,14 @@ headers: PNG, JPEG, GIF, WebP, AVIF, PDF, ZIP, FLAC, ID3 MP3, WAV, Ogg
 Opus/Vorbis, common MP4/M4A brands, WebM and AVI. Unknown content is a document
 with `application/octet-stream` and `.bin`. ZIP is not guessed as Office content.
 Signatures classify content but do not establish safety or structural validity.
+For recognized MP4/M4A brands, the verified plaintext descriptor is inspected
+before publication: only `moov/trak/mdia/hdlr` boxes are traversed, including a
+`moov` after `mdat`. All tracks must identify as `soun` to produce `audio/mp4`
+and `.m4a`; video, mixed, unknown or malformed layouts remain `video/mp4`.
+The scan permits at most 1024 boxes and four hierarchy levels, reads at most
+40 KiB of box headers/handler fields, and seeks past payloads without buffering
+them. Normal, extended and zero-to-container-end box sizes are bounded by their
+container and file. Filenames and SFS MIME metadata never override this analysis.
 
 ## Retention Boundary
 

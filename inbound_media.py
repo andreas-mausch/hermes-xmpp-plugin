@@ -83,7 +83,60 @@ class PublicResolver(aiohttp.abc.AbstractResolver):
         pass
 
 
-def content_type(data: bytes) -> tuple[str, str]:
+def _mp4_audio_only(fd: int) -> bool:
+    """Inspect only track handlers, skipping payloads with bounded descriptor reads."""
+    remaining = 1024
+    handlers = []
+
+    def scan(start, end, level):
+        nonlocal remaining
+        children = 0
+        while start < end:
+            remaining -= 1
+            if remaining < 0 or end - start < 8:
+                raise ValueError
+            header = os.pread(fd, 8, start)
+            if len(header) != 8:
+                raise ValueError
+            size, kind = int.from_bytes(header[:4], "big"), header[4:]
+            width = 8
+            if size == 1:
+                if end - start < 16:
+                    raise ValueError
+                extended = os.pread(fd, 8, start + 8)
+                if len(extended) != 8:
+                    raise ValueError
+                size, width = int.from_bytes(extended, "big"), 16
+            elif size == 0:
+                size = end - start
+            if size < width or size > end - start:
+                raise ValueError
+            if level == 0 and kind == b"ftyp" and (size - width < 8 or (size - width) % 4):
+                raise ValueError
+            if kind == (b"moov", b"trak", b"mdia", b"hdlr")[level]:
+                children += 1
+                if level < 3:
+                    scan(start + width, start + size, level + 1)
+                else:
+                    # FullBox version/flags, pre_defined, handler_type, reserved.
+                    if size - width < 24:
+                        raise ValueError
+                    handler = os.pread(fd, 24, start + width)
+                    if len(handler) != 24 or handler[:8] != b"\0" * 8:
+                        raise ValueError
+                    handlers.append(handler[8:12])
+            start += size
+        if children == 0 or (level != 1 and children != 1):
+            raise ValueError
+
+    try:
+        scan(0, os.fstat(fd).st_size, 0)
+    except ValueError:
+        return False
+    return bool(handlers) and all(handler == b"soun" for handler in handlers)
+
+
+def content_type(data: bytes, *, fd: int | None = None) -> tuple[str, str]:
     for signature, mime, suffix in (
         (b"\x89PNG\r\n\x1a\n", "image/png", ".png"),
         (b"\xff\xd8\xff", "image/jpeg", ".jpg"),
@@ -104,11 +157,12 @@ def content_type(data: bytes) -> tuple[str, str]:
     if data.startswith(b"OggS"):
         return ("audio/ogg", ".ogg") if b"OpusHead" in data or b"\x01vorbis" in data else ("application/ogg", ".ogg")
     if data[4:8] == b"ftyp":
-        if data[8:12] in (b"avif", b"avis"):
+        brand = data[16:20] if data[:4] == b"\0\0\0\1" else data[8:12]
+        if brand in (b"avif", b"avis"):
             return "image/avif", ".avif"
-        if data[8:12] in (b"M4A ", b"M4B "):
-            return "audio/mp4", ".m4a"
-        if data[8:12] in (b"isom", b"iso2", b"mp41", b"mp42", b"avc1", b"M4V "):
+        if brand in (b"M4A ", b"M4B ", b"isom", b"iso2", b"mp41", b"mp42", b"avc1", b"M4V "):
+            if (fd is not None and _mp4_audio_only(fd)) or (fd is None and brand in (b"M4A ", b"M4B ")):
+                return "audio/mp4", ".m4a"
             return "video/mp4", ".mp4"
     if data.startswith(b"\x1aE\xdf\xa3") and b"webm" in data[:128]:
         return "video/webm", ".webm"
@@ -260,11 +314,11 @@ class MediaCache:
         name = uuid.uuid4().hex + ".part"
         created = False
         try:
-            fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            fd = os.open(name, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                          0o600, dir_fd=self._fd)
             created = True
             self._temps.add(name)
-            with os.fdopen(fd, "wb") as output:
+            with os.fdopen(fd, "w+b") as output:
                 decryptor = Cipher(algorithms.AES(key), modes.GCM(iv)).decryptor()
                 tail, size, header = b"", 0, b""
                 connector = aiohttp.TCPConnector(resolver=PublicResolver(), use_dns_cache=False)
@@ -291,8 +345,8 @@ class MediaCache:
                 output.write(decryptor.finalize_with_tag(tail))
                 output.flush()
                 os.fsync(output.fileno())
+                mime, suffix = content_type(header, fd=output.fileno())
             os.utime(name, None, dir_fd=self._fd, follow_symlinks=False)
-            mime, suffix = content_type(header)
             final = uuid.uuid4().hex + suffix
             # Exclusive hard-link publication is atomic and cannot overwrite a symlink.
             os.link(name, final, src_dir_fd=self._fd, dst_dir_fd=self._fd, follow_symlinks=False)
