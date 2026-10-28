@@ -274,6 +274,56 @@ async def test_quota_and_cleanup(cache, network, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_entries_see_new_files_with_nonzero_held_offset(cache):
+    assert cache._entries() == []
+    for name in ("first", "second"):
+        (cache.root / name).write_bytes(b"keep")
+        os.lseek(cache._fd, 1, os.SEEK_SET)
+        assert set(cache._entries()) == ({"first"} if name == "first" else {"first", "second"})
+        assert os.lseek(cache._fd, 0, os.SEEK_CUR) == 1
+
+
+@pytest.mark.parametrize("failure", [False, True])
+@pytest.mark.asyncio
+async def test_entries_close_scan_descriptor(cache, monkeypatch, failure):
+    listdir = os.listdir
+    scanned = []
+
+    def scan(fd):
+        assert fd != cache._fd
+        scanned.append(fd)
+        if failure:
+            raise OSError("scan failed")
+        return listdir(fd)
+
+    monkeypatch.setattr(os, "listdir", scan)
+    if failure:
+        with pytest.raises(OSError, match="scan failed"):
+            cache._entries()
+    else:
+        assert cache._entries() == []
+    assert len(scanned) == 1
+    with pytest.raises(OSError):
+        os.fstat(scanned[0])
+    os.fstat(cache._fd)
+
+
+@pytest.mark.asyncio
+async def test_repeated_sweep_and_quota_see_new_files(cache, network):
+    for name in ("first", "second"):
+        expired = cache.root / name
+        expired.write_bytes(b"old")
+        os.utime(expired, (0, 0))
+        cache.sweep()
+        assert not expired.exists()
+    cache.quota = 8192
+    await cache.fetch(URI)
+    with pytest.raises(MediaError):
+        await cache.fetch(URI)
+    assert len(network["calls"]) == 1
+
+
+@pytest.mark.asyncio
 async def test_symlink_cache_rejected(tmp_path):
     target = tmp_path / "target"
     target.mkdir()

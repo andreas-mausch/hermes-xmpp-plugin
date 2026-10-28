@@ -56,7 +56,9 @@ The cache also caps entry count at 1024, preventing tiny-file inode exhaustion.
 
 The directory is `$HERMES_HOME/cache/xmpp-inbound` (0700). Published files and
 unfinished `.part` files are created exclusively with 0600. Directory traversal
-uses no-follow descriptors; cache operations are descriptor-relative. Streaming
+uses no-follow descriptors; cache operations are descriptor-relative. Each sweep
+and quota scan opens a fresh directory descriptor so its scan state is independent
+of earlier scans and the held cache descriptor's offset. Streaming
 GCM writes unverified plaintext only into private temporary files. Atomic,
 exclusive publication happens only after tag verification. Cancellation, timeout
 and authentication failure unlink temporary plaintext. No full-file buffering.

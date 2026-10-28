@@ -164,8 +164,15 @@ class MediaCache:
             raise
         self._sweeper = asyncio.create_task(self._sweep_loop())
 
+    def _entries(self):
+        fd = os.open(".", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=self._fd)
+        try:
+            return os.listdir(fd)
+        finally:
+            os.close(fd)
+
     def sweep(self, *, startup=False):
-        for name in os.listdir(self._fd):
+        for name in self._entries():
             if name in self._temps:
                 continue
             try:
@@ -237,7 +244,7 @@ class MediaCache:
         if literal is not None and not public_address(str(literal)):
             raise MediaError("Attachment host denied")
         self.sweep()
-        entries = os.listdir(self._fd)
+        entries = self._entries()
         if len(entries) >= 1024:
             raise MediaError("Attachment cache full")
         used = 0
