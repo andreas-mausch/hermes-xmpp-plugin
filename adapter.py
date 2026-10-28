@@ -1262,11 +1262,11 @@ class XmppAdapter(BasePlatformAdapter):
                 message_id=stanza.get("id") or None,
                 reply_to_message_id=reply_to_message_id,
                 reply_to_text=reply_to_text,
-                # Decryption may replace the stanza; use original wire metadata.
-                metadata={"xmpp_markable": (
-                    getattr(stanza, "xml", None) is not None
-                    and stanza.xml.find("{urn:xmpp:chat-markers:0}markable") is not None
-                )},
+            )
+            # Native admission rejects plugin metadata. Keep wire-only hook state local.
+            event._xmpp_markable = (
+                getattr(stanza, "xml", None) is not None
+                and stanza.xml.find("{urn:xmpp:chat-markers:0}markable") is not None
             )
             await self.handle_message(event)
         except Exception:
@@ -1914,7 +1914,7 @@ class XmppAdapter(BasePlatformAdapter):
     async def on_processing_start(self, event: MessageEvent) -> None:
         if (self.client is None or "xep_0333" not in self._registered_plugins
                 or event.source.chat_type != "dm" or not event.message_id
-                or not (event.metadata or {}).get("xmpp_markable")
+                or not getattr(event, "_xmpp_markable", False)
                 or not self._is_authorized(
                     chat_type="dm", chat_id=event.source.chat_id,
                     user_jid=event.source.user_id,

@@ -852,6 +852,12 @@ async def test_displayed_at_processing_acceptance(adapter_instance, case, expect
 
     a.handle_message = AsyncMock(side_effect=handoff)
     await a._on_message(stanza)
+    if a.handle_message.called:
+        # Hermes session_envelope._native_metadata rejects nonempty metadata
+        # on non-WhatsApp inputs, including {"xmpp_markable": False}.
+        event = a.handle_message.call_args.args[0]
+        assert event.metadata == {}
+        assert event._xmpp_markable is (case != "unmarkable")
     assert xmpp.send.call_count == int(expected or case == "marker_failed")
     if a.client is not None:
         a.client.plugins["xep_0444"].set_reactions.assert_not_called()
@@ -1039,6 +1045,10 @@ async def test_displayed_omemo_uses_original_metadata(
     a.client.plugins["xep_0384"] = omemo
     a.handle_message = AsyncMock(side_effect=a.on_processing_start)
     await a._on_message(wire)
+    if trusted and not decrypt_fails:
+        event = a.handle_message.call_args.args[0]
+        assert event.metadata == {}
+        assert event._xmpp_markable is markable
     assert markers.send_marker.call_count == int(markable and trusted and not decrypt_fails)
     if markers.send_marker.called:
         markers.send_marker.assert_called_once_with(
