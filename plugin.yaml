@@ -99,6 +99,7 @@ optional_env:
 pip_dependencies:
   - "slixmpp==1.15.0"
   - "aiohttp>=3.14.1"
+  - "yarl>=1.17.0,<2"
   - "cryptography>=44"
   - "slixmpp-omemo"
   - "omemo"
