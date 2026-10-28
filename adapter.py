@@ -661,9 +661,13 @@ class XmppAdapter(BasePlatformAdapter):
                 "xmpp: IPv6 disabled for this connection (no working global v6 route, or use_ipv6=false)"
             )
         # Plugins - core
-        for plugin in ("xep_0030", "xep_0045", "xep_0066", "xep_0085", "xep_0199", "xep_0203", "xep_0333", "xep_0363", "xep_0380"):
+        for plugin in ("xep_0030", "xep_0045", "xep_0066", "xep_0085", "xep_0184", "xep_0199", "xep_0203", "xep_0333", "xep_0363", "xep_0380"):
             try:
-                client.register_plugin(plugin)
+                if plugin == "xep_0184":
+                    # Only the adapter may acknowledge after authorization/trust checks.
+                    client.register_plugin(plugin, {"auto_ack": False, "auto_request": False})
+                else:
+                    client.register_plugin(plugin)
                 self._registered_plugins.add(plugin)
             except Exception:
                 logger.warning("xmpp: failed to register slixmpp plugin %s", plugin)
@@ -1098,6 +1102,14 @@ class XmppAdapter(BasePlatformAdapter):
             user_id = (self._muc_real_jid(stanza) or from_bare) if chat_type == "group" else from_bare
             if not self._is_authorized(chat_type=chat_type, chat_id=from_bare, user_jid=user_id):
                 return
+            # Decryption can replace or mutate the stanza; retain wire receipt metadata.
+            wire_id = stanza.get("id")
+            wire_xml = getattr(stanza, "xml", None)
+            receipt_requested = (
+                wire_xml is not None
+                and wire_xml.find("{urn:xmpp:receipts}request") is not None
+                and wire_xml.find("{urn:xmpp:receipts}received") is None
+            )
             decrypted = False
 
             # OMEMO decryption
@@ -1138,6 +1150,16 @@ class XmppAdapter(BasePlatformAdapter):
                     and stanza_type != "groupchat" and not decrypted):
                 logger.debug("OMEMO: ignoring unencrypted 1:1 stanza from %s", from_bare)
                 return
+
+            if (stanza_type != "groupchat" and body.strip() and receipt_requested
+                    and isinstance(wire_id, str) and wire_id.strip()
+                    and self.client is not None and "xep_0184" in self._registered_plugins):
+                try:
+                    receipt = self.client.make_message(mto=from_full)
+                    receipt["receipt"] = wire_id
+                    receipt.send()
+                except Exception:
+                    logger.debug("xmpp: failed to send delivery receipt", exc_info=True)
 
             # ----------------------------------------------------------------
             # Inbound XEP-0004 form submission (clarify response)

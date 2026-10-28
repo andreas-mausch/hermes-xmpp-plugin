@@ -26,7 +26,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -275,6 +275,36 @@ def _reset_state():
 # -----------------------------------------------------------------
 # connect() returns immediately — it does not block on session establishment
 # -----------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_receipt_registration_disables_automatic_behavior(monkeypatch):
+    from slixmpp import ClientXMPP, Message
+    a = adapter.XmppAdapter(_make_cfg())
+    monkeypatch.setattr(adapter, "ClientXMPP", _FakeSlixmppClient)
+    with patch.object(_FakeSlixmppClient, "register_plugin", autospec=True) as register:
+        assert await a.connect()
+    try:
+        calls = [call for call in register.call_args_list if call.args[1] == "xep_0184"]
+        assert len(calls) == 1
+        assert calls[0].args[2] == {"auto_ack": False, "auto_request": False}
+        assert "xep_0184" in a._registered_plugins
+        xmpp = ClientXMPP("hermes@example.org", "secret")
+        xmpp.register_plugin("xep_0184", calls[0].args[2])
+        xmpp.send = MagicMock()
+        receipts = xmpp["xep_0184"]
+        assert receipts.auto_ack is False
+        assert receipts.auto_request is False
+        incoming = Message()
+        incoming["from"], incoming["type"], incoming["id"] = "stranger@example.org/phone", "chat", "id"
+        incoming["request_receipt"] = True
+        receipts._handle_receipt_request(incoming)
+        xmpp.send.assert_not_called()
+        outgoing = xmpp.make_message(mto="user@example.org", mbody="reply", mtype="chat")
+        assert receipts._filter_add_receipt_request(outgoing) is outgoing
+        assert outgoing.xml.find("{urn:xmpp:receipts}request") is None
+    finally:
+        await a.disconnect()
+
 
 @pytest.mark.asyncio
 async def test_display_name_presence_filter(monkeypatch):

@@ -15,6 +15,7 @@ to land. It supports:
 - XEP-0050 ad-hoc commands
 - XEP-0394 message markup (bold, code, lists)
 - XEP-0461 threaded message replies
+- XEP-0184 delivery receipts for requested, validated direct messages
 - XEP-0333 displayed markers for accepted markable direct messages
 - XEP-0444 message reactions (✅/❌ for processing completion)
 - XEP-0447 stateless file sharing for voice messages
@@ -249,6 +250,25 @@ supporting XEP-0444, XEP-0461, and XEP-0394.
 
 ## Features in depth
 
+### Delivery receipts (XEP-0184)
+
+The adapter acknowledges an authorized direct message that requests a delivery
+receipt and has a non-empty message ID and usable body. For OMEMO, successful
+decryption and device trust checks are required first. The receipt uses the
+original wire request and ID and is routed to the sender's full JID, including
+the resource when present.
+
+Delivered means received and validated by the adapter, not queued, processed,
+read by a person, or successfully answered. The receipt is sent before dispatch,
+even if the handoff later fails or processing never starts. The separate
+`displayed` marker below indicates processing start.
+
+Automatic Slixmpp replies and outbound receipt requests are disabled. Group
+messages, empty bodies, missing IDs, and receipt acknowledgements are not
+acknowledged. Incoming user receipts are not tracked. There is no new setting;
+receipts are independent of `XMPP_REACTIONS` and are unencrypted stanza metadata,
+including for OMEMO messages.
+
 ### Displayed markers (XEP-0333)
 
 When Hermes starts processing an authorized direct message with a message ID and
@@ -260,8 +280,8 @@ marked only when the processing-start hook runs.
 
 Markers replace the previous eyes reaction, with no reaction fallback. They are
 independent of `XMPP_REACTIONS`. Group messages are not marked. Outgoing messages
-do not request markers, incoming user read markers are not tracked, and XEP-0184
-delivery receipts are not enabled. Like reactions, these markers are unencrypted
+do not request markers and incoming user read markers are not tracked.
+Like delivery receipts and reactions, these markers are unencrypted
 stanza metadata, including for OMEMO messages.
 
 ### Message reactions (XEP-0444)

@@ -866,6 +866,139 @@ async def test_displayed_at_processing_acceptance(adapter_instance, case, expect
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("case,expected", [
+    ("chat", True), ("normal", True), ("bare_sender", True),
+    ("no_request", False), ("missing_id", False), ("blank_id", False),
+    ("group", False), ("unauthorized", False), ("self", False),
+    ("empty", False), ("blank_body", False), ("receipt", False),
+    ("plaintext_rejected", False), ("plugin_missing", False),
+    ("handoff_rejected", True), ("handoff_failed", True), ("send_failed", False),
+])
+async def test_delivery_receipt_before_dispatch(adapter_instance, case, expected):
+    from slixmpp import ClientXMPP, Message
+    xmpp = ClientXMPP("hermes@example.org", "secret")
+    xmpp.register_plugin("xep_0184", {"auto_ack": False, "auto_request": False})
+    xmpp.register_plugin("xep_0333")
+    xmpp.send = MagicMock()
+    a = adapter_instance
+    a.client = xmpp
+    a._registered_plugins.update({"xep_0184", "xep_0333"})
+    stanza = Message()
+    sender = "user@example.org" if case == "bare_sender" else "user@example.org/phone"
+    stanza["from"], stanza["type"], stanza["id"] = sender, "chat", "wire-id"
+    stanza["body"] = "request"
+    stanza["request_receipt"] = case != "no_request"
+    stanza.enable("markable")
+    if case == "normal":
+        stanza["type"] = "normal"
+    if case == "missing_id":
+        del stanza["id"]
+    if case == "blank_id":
+        stanza["id"] = "   "
+    if case == "group":
+        stanza["from"], stanza["type"] = "room@conference.example.org/peer", "groupchat"
+    if case == "self":
+        stanza["from"] = "hermes@example.org/other"
+    if case == "unauthorized":
+        a.allow_all_users, a.allowed_users = False, set()
+    if case in ("empty", "blank_body"):
+        stanza["body"] = "" if case == "empty" else " \n "
+    if case == "receipt":
+        stanza["receipt"] = "other-id"  # Even malformed ack + body + request must not loop.
+    if case == "plaintext_rejected":
+        a._omemo_enabled = True
+    if case == "plugin_missing":
+        a._registered_plugins.remove("xep_0184")
+    if case == "send_failed":
+        xmpp.send.side_effect = RuntimeError("send failed")
+
+    async def handoff(event):
+        assert xmpp.send.call_count == int(expected or case == "send_failed")
+        if case == "handoff_failed":
+            raise RuntimeError("handoff failed")
+        # No processing-start hook: queued/rejected handoffs still receive a receipt.
+
+    a.handle_message = AsyncMock(side_effect=handoff)
+    await a._on_message(stanza)
+    assert xmpp.send.call_count == int(expected or case == "send_failed")
+    if case == "send_failed":
+        a.handle_message.assert_awaited_once()
+    if expected:
+        receipt = xmpp.send.call_args.args[0]
+        assert str(receipt["to"]) == sender
+        assert receipt.xml.find("{urn:xmpp:receipts}received").get("id") == "wire-id"
+        assert not receipt["body"]
+        assert len(receipt.xml) == 1
+        if case == "chat":
+            await a.on_processing_start(a.handle_message.call_args.args[0])
+            assert xmpp.send.call_count == 2
+            assert xmpp.send.call_args.args[0].xml.find(
+                "{urn:xmpp:chat-markers:0}displayed"
+            ).get("id") == "wire-id"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case,expected", [
+    ("trusted", True), ("untrusted", False), ("undecided", False),
+    ("blind", False), ("decrypt_failed", False), ("empty", False),
+    ("replacement_request", False), ("mutated_wire", True),
+])
+async def test_delivery_receipt_omemo_validation(adapter_instance, monkeypatch, case, expected):
+    from slixmpp import ClientXMPP, Message
+    from types import SimpleNamespace
+    xmpp = ClientXMPP("hermes@example.org", "secret")
+    xmpp.register_plugin("xep_0184", {"auto_ack": False, "auto_request": False})
+    xmpp.send = MagicMock()
+    a = adapter_instance
+    a.client.make_message = xmpp.make_message
+    a._omemo_enabled = True
+    a._registered_plugins.update({"xep_0184", "xep_0384"})
+    monkeypatch.setenv("XMPP_OMEMO_BTBV", "false")
+    monkeypatch.setattr(adapter, "SLIXMPP_OMEMO_AVAILABLE", True)
+    monkeypatch.setattr(adapter, "TrustLevel", SimpleNamespace(**{
+        name: SimpleNamespace(value=name) for name in ("TRUSTED", "BLINDLY_TRUSTED", "UNDECIDED")
+    }))
+    wire = Message()
+    wire["from"], wire["type"], wire["id"] = "user@example.org/phone", "chat", "wire-id"
+    wire["body"] = "encrypted fallback"
+    wire["request_receipt"] = case != "replacement_request"
+    replacement = Message()
+    replacement["body"], replacement["id"] = "plaintext", "replacement-id"
+    replacement["request_receipt"] = True
+    if case == "empty":
+        replacement["body"] = ""
+    trust = {"untrusted": "DISTRUSTED", "undecided": "UNDECIDED", "blind": "BLINDLY_TRUSTED"}.get(case, "TRUSTED")
+    omemo = MagicMock()
+    omemo.is_encrypted.return_value = True
+    omemo.get_session_manager = AsyncMock(return_value=SimpleNamespace(set_trust=AsyncMock()))
+
+    async def decrypt(stanza):
+        xmpp.send.assert_not_called()
+        if case == "decrypt_failed":
+            raise RuntimeError("decryption failed")
+        if case == "mutated_wire":
+            stanza["id"], stanza["from"], stanza["request_receipt"] = "changed", "other@example.org", False
+        return replacement, SimpleNamespace(
+            trust_level_name=trust, device_id=1, bare_jid="user@example.org", identity_key=b"key",
+        )
+
+    omemo.decrypt_message = AsyncMock(side_effect=decrypt)
+    a.client.plugins["xep_0384"] = omemo
+
+    async def handoff(event):
+        assert xmpp.send.call_count == int(expected)
+
+    a.handle_message = AsyncMock(side_effect=handoff)
+    await a._on_message(wire)
+    assert xmpp.send.call_count == int(expected)
+    if expected:
+        receipt = xmpp.send.call_args.args[0]
+        assert str(receipt["to"]) == "user@example.org/phone"
+        assert receipt.xml.find("{urn:xmpp:receipts}received").get("id") == "wire-id"
+        assert len(receipt.xml) == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("markable,trusted,decrypt_fails", [
     (True, True, False), (False, True, False),
     (True, False, False), (True, True, True),
