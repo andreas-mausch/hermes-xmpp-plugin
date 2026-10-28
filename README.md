@@ -56,8 +56,7 @@ at `d01087a` (upstream HEAD checked on 2026-10-27):
   trusted OMEMO DMs into local media: `PHOTO`, `VOICE`, `VIDEO` or `DOCUMENT`.
   All audio, including music, uses `VOICE` for automatic transcription; voice notes are
   not inferred. Captions remain, but encryption URLs, keys and thumbnails are removed
-  from dispatched text and raw stanzas are withheld. See
-  [Incoming Media](docs/encrypted-media.md#incoming-media) for formats, security and retention limits.
+  from dispatched text and raw stanzas are withheld.
 - **Message status:** Receiving, starting processing and finishing processing are distinct
   states. The bot does not request or track user read/delivery confirmations.
   - [Delivery receipts (XEP-0184)](#delivery-receipts-xep-0184) acknowledge requested,
