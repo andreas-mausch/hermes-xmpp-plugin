@@ -594,8 +594,6 @@ class XmppAdapter(BasePlatformAdapter):
         self._known_dms: set[str] = set()
         self._registered_plugins: set[str] = set()
 
-        # Reaction state: message_id → original stanza (for lifecycle hooks)
-        self._pending_reactions: Dict[str, Any] = {}
         self._reactions_enabled: bool = os.getenv("XMPP_REACTIONS", "true").lower() not in {"false", "0", "no"}
 
         # XEP-0004 data forms for clarify: many popular clients (Conversations,
@@ -663,7 +661,7 @@ class XmppAdapter(BasePlatformAdapter):
                 "xmpp: IPv6 disabled for this connection (no working global v6 route, or use_ipv6=false)"
             )
         # Plugins - core
-        for plugin in ("xep_0030", "xep_0045", "xep_0066", "xep_0085", "xep_0199", "xep_0203", "xep_0363", "xep_0380"):
+        for plugin in ("xep_0030", "xep_0045", "xep_0066", "xep_0085", "xep_0199", "xep_0203", "xep_0333", "xep_0363", "xep_0380"):
             try:
                 client.register_plugin(plugin)
                 self._registered_plugins.add(plugin)
@@ -1242,6 +1240,11 @@ class XmppAdapter(BasePlatformAdapter):
                 message_id=stanza.get("id") or None,
                 reply_to_message_id=reply_to_message_id,
                 reply_to_text=reply_to_text,
+                # Decryption may replace the stanza; use original wire metadata.
+                metadata={"xmpp_markable": (
+                    getattr(stanza, "xml", None) is not None
+                    and stanza.xml.find("{urn:xmpp:chat-markers:0}markable") is not None
+                )},
             )
             await self.handle_message(event)
         except Exception:
@@ -1857,7 +1860,7 @@ class XmppAdapter(BasePlatformAdapter):
             return SendResult(success=False, error=str(exc), retryable=True)
 
     # -----------------------------------------------------------------
-    # Lifecycle hooks (reactions)
+    # Lifecycle hooks (displayed markers and completion reactions)
     # -----------------------------------------------------------------
 
     def _reactions_allowed(self, event: MessageEvent) -> bool:
@@ -1887,15 +1890,21 @@ class XmppAdapter(BasePlatformAdapter):
         msg.send()
 
     async def on_processing_start(self, event: MessageEvent) -> None:
-        if not self._reactions_allowed(event):
+        if (self.client is None or "xep_0333" not in self._registered_plugins
+                or event.source.chat_type != "dm" or not event.message_id
+                or not (event.metadata or {}).get("xmpp_markable")
+                or not self._is_authorized(
+                    chat_type="dm", chat_id=event.source.chat_id,
+                    user_jid=event.source.user_id,
+                )):
             return
-        target_id = self._extract_reaction_target(event)
-        if target_id and self.client is not None and "xep_0444" in self._registered_plugins:
-            try:
-                self._send_reaction(event.source.chat_id, target_id, ["👀"])
-                self._pending_reactions[target_id] = event
-            except Exception:
-                logger.debug("xmpp: failed to send 👀 reaction", exc_info=True)
+        try:
+            self.client["xep_0333"].send_marker(
+                mto=event.source.chat_id, id=event.message_id,
+                marker="displayed", mtype="chat",
+            )
+        except Exception:
+            logger.debug("xmpp: failed to send displayed marker", exc_info=True)
 
     async def on_processing_complete(
         self, event: MessageEvent, outcome: ProcessingOutcome
@@ -1908,19 +1917,12 @@ class XmppAdapter(BasePlatformAdapter):
         if not target_id or self.client is None or "xep_0444" not in self._registered_plugins:
             return
         try:
-            # Remove in-progress reaction
-            self._send_reaction(event.source.chat_id, target_id, [])
-        except Exception:
-            logger.debug("xmpp: failed to remove 👀 reaction", exc_info=True)
-        try:
             if outcome == ProcessingOutcome.SUCCESS:
                 self._send_reaction(event.source.chat_id, target_id, ["✅"])
             elif outcome == ProcessingOutcome.FAILURE:
                 self._send_reaction(event.source.chat_id, target_id, ["❌"])
         except Exception:
             logger.debug("xmpp: failed to send final reaction", exc_info=True)
-        finally:
-            self._pending_reactions.pop(target_id, None)
 
     # -----------------------------------------------------------------
     # Clarify via XEP-0004 Data Forms

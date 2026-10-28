@@ -205,7 +205,6 @@ def fake_adapter(fake_client):
         "xep_0447",
         "xep_0363",
     }
-    a._pending_reactions = {}
     return a
 
 
@@ -214,7 +213,7 @@ def fake_adapter(fake_client):
 # ------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_on_processing_start_triggers_reaction(fake_adapter, fake_client):
+async def test_on_processing_start_has_no_reaction_fallback(fake_adapter, fake_client):
     fake_client.plugins["xep_0444"] = MagicMock()
 
     source = MagicMock()
@@ -225,7 +224,7 @@ async def test_on_processing_start_triggers_reaction(fake_adapter, fake_client):
     evt.source = source
     evt.message_id = "msg-1"
     await fake_adapter.on_processing_start(event=evt)
-    assert "msg-1" in fake_adapter._pending_reactions
+    fake_client.plugins["xep_0444"].set_reactions.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -240,7 +239,6 @@ async def test_on_processing_complete_success(fake_adapter, fake_client):
     evt = MagicMock()
     evt.source = source
     evt.message_id = "msg-1"
-    fake_adapter._pending_reactions["msg-1"] = evt
 
     await fake_adapter.on_processing_complete(event=evt, outcome=ProcessingOutcome.SUCCESS)
 
@@ -261,7 +259,6 @@ async def test_on_processing_complete_error(fake_adapter, fake_client):
     evt = MagicMock()
     evt.source = source
     evt.message_id = "msg-1"
-    fake_adapter._pending_reactions["msg-1"] = evt
 
     await fake_adapter.on_processing_complete(event=evt, outcome=ProcessingOutcome.FAILURE)
 

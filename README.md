@@ -15,7 +15,8 @@ to land. It supports:
 - XEP-0050 ad-hoc commands
 - XEP-0394 message markup (bold, code, lists)
 - XEP-0461 threaded message replies
-- XEP-0444 message reactions (e.g., 👀/✅/❌ for processing status)
+- XEP-0333 displayed markers for accepted markable direct messages
+- XEP-0444 message reactions (✅/❌ for processing completion)
 - XEP-0447 stateless file sharing for voice messages
 - OMEMO end-to-end encryption (enabled by default, needs optional dependencies)
 - cron and `send_message` delivery through a standalone sender hook
@@ -248,11 +249,26 @@ supporting XEP-0444, XEP-0461, and XEP-0394.
 
 ## Features in depth
 
+### Displayed markers (XEP-0333)
+
+When Hermes starts processing an authorized direct message with a message ID and
+an original `<markable/>` extension, the adapter sends a `displayed` marker.
+Receipt alone does not trigger it: rejected messages and failed handoffs before
+processing starts are not marked. OMEMO messages use the original stanza ID and
+markable flag after successful decryption and trust checks. Queued messages are
+marked only when the processing-start hook runs.
+
+Markers replace the previous eyes reaction, with no reaction fallback. They are
+independent of `XMPP_REACTIONS`. Group messages are not marked. Outgoing messages
+do not request markers, incoming user read markers are not tracked, and XEP-0184
+delivery receipts are not enabled. Like reactions, these markers are unencrypted
+stanza metadata, including for OMEMO messages.
+
 ### Message reactions (XEP-0444)
 
-When Hermes starts processing a request, the adapter sends a 👀 reaction. When it
-finishes, ✅ or ❌ is sent depending on success or error. Reactions are visible in
-clients that support XEP-0444 (Conversations, Dino, Gajim, etc.).
+When processing finishes, ✅ or ❌ is sent depending on success or error.
+Reactions are visible in clients that support XEP-0444 (Conversations, Dino,
+Gajim, etc.).
 
 Reactions can also be sent by Hermes tools; the adapter maps the reaction to the
 original message using slixmpp's `xep_0444`.

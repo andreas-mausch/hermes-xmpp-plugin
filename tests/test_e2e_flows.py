@@ -336,7 +336,6 @@ def adapter_instance():
     a.client = client
     a._session_ready = asyncio.Event()
     a._session_ready.set()
-    a._pending_reactions = {}
     return a
 
 
@@ -800,6 +799,121 @@ async def test_send_returns_failure_when_disconnected(adapter_instance):
 # -----------------------------------------------------------------
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("case,expected", [
+    ("chat", True), ("normal", True), ("unmarkable", False),
+    ("missing_id", False), ("group", False), ("unauthorized", False),
+    ("plaintext_rejected", False), ("empty", False),
+    ("handoff_rejected", False), ("handoff_failed", False),
+    ("plugin_missing", False), ("marker_failed", False),
+    ("disconnected", False), ("authorization_revoked", False),
+])
+async def test_displayed_at_processing_acceptance(adapter_instance, case, expected):
+    from slixmpp import ClientXMPP, Message
+    # Real registration and serialization, without opening a connection.
+    xmpp = ClientXMPP("hermes@example.org", "secret")
+    xmpp.register_plugin("xep_0333")
+    xmpp.send = MagicMock()
+    a = adapter_instance
+    a._registered_plugins.add("xep_0333")
+    a.client.plugins["xep_0333"] = xmpp["xep_0333"]
+    a.client.plugins["xep_0444"] = MagicMock()
+    a._reactions_enabled = False  # Markers are not gated by reactions.
+    stanza = Message()
+    stanza["from"] = "user@example.org/phone"
+    stanza["type"] = "normal" if case == "normal" else "chat"
+    stanza["body"] = "request" if case != "empty" else ""
+    if case != "missing_id":
+        stanza["id"] = "wire-id"
+    if case != "unmarkable":
+        stanza.enable("markable")
+    if case == "group":
+        stanza["type"], stanza["from"] = "groupchat", "room@conference.example.org/peer"
+    if case == "unauthorized":
+        a.allow_all_users = False
+        a.allowed_users = set()
+    if case == "plaintext_rejected":
+        a._omemo_enabled = True
+    if case == "plugin_missing":
+        a._registered_plugins.remove("xep_0333")
+    if case == "marker_failed":
+        xmpp.send.side_effect = RuntimeError("send failed")
+
+    async def handoff(event):
+        xmpp.send.assert_not_called()  # Receipt/dispatch is not acceptance.
+        if case == "handoff_failed":
+            raise RuntimeError("handoff failed")
+        if case == "disconnected":
+            a.client = None
+        if case == "authorization_revoked":
+            a.allow_all_users = False
+            a.allowed_users = set()
+        if case != "handoff_rejected":
+            await a.on_processing_start(event)
+
+    a.handle_message = AsyncMock(side_effect=handoff)
+    await a._on_message(stanza)
+    assert xmpp.send.call_count == int(expected or case == "marker_failed")
+    if a.client is not None:
+        a.client.plugins["xep_0444"].set_reactions.assert_not_called()
+    if expected:
+        marker = xmpp.send.call_args.args[0]
+        assert str(marker["to"]) == "user@example.org"
+        assert marker["type"] == "chat"
+        assert marker.xml.find("{urn:xmpp:chat-markers:0}displayed").get("id") == "wire-id"
+        assert not marker["body"]
+        assert marker.xml.find("{urn:xmpp:chat-markers:0}markable") is None
+        assert marker.xml.find("{urn:xmpp:receipts}request") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("markable,trusted,decrypt_fails", [
+    (True, True, False), (False, True, False),
+    (True, False, False), (True, True, True),
+])
+async def test_displayed_omemo_uses_original_metadata(
+    adapter_instance, monkeypatch, markable, trusted, decrypt_fails,
+):
+    from slixmpp import ClientXMPP, Message
+    from types import SimpleNamespace
+    xmpp = ClientXMPP("hermes@example.org", "secret")
+    xmpp.register_plugin("xep_0333")
+    a = adapter_instance
+    a._omemo_enabled = True
+    a._registered_plugins.update({"xep_0333", "xep_0384"})
+    markers = MagicMock()
+    a.client.plugins["xep_0333"] = markers
+    monkeypatch.setattr(adapter, "SLIXMPP_OMEMO_AVAILABLE", True)
+    monkeypatch.setattr(adapter, "TrustLevel", SimpleNamespace(
+        TRUSTED=SimpleNamespace(value="TRUSTED"),
+        BLINDLY_TRUSTED=SimpleNamespace(value="BLINDLY_TRUSTED"),
+        UNDECIDED=SimpleNamespace(value="UNDECIDED"),
+    ))
+    wire = Message()
+    wire["from"], wire["type"], wire["id"] = "user@example.org/phone", "chat", "wire-id"
+    if markable:
+        wire.enable("markable")
+    decrypted = Message()
+    decrypted["body"], decrypted["id"] = "decrypted request", "different-id"
+    if not markable:
+        decrypted.enable("markable")  # Never infer it from replacement XML.
+    omemo = MagicMock()
+    omemo.is_encrypted.return_value = True
+    omemo.decrypt_message = AsyncMock(return_value=(decrypted, SimpleNamespace(
+        trust_level_name="TRUSTED" if trusted else "DISTRUSTED", device_id=1,
+    )))
+    if decrypt_fails:
+        omemo.decrypt_message.side_effect = RuntimeError("decrypt failed")
+    a.client.plugins["xep_0384"] = omemo
+    a.handle_message = AsyncMock(side_effect=a.on_processing_start)
+    await a._on_message(wire)
+    assert markers.send_marker.call_count == int(markable and trusted and not decrypt_fails)
+    if markers.send_marker.called:
+        markers.send_marker.assert_called_once_with(
+            mto="user@example.org", id="wire-id", marker="displayed", mtype="chat",
+        )
+
+
+@pytest.mark.asyncio
 async def test_reaction_lifecycle_from_start_to_success(adapter_instance):
     client = adapter_instance.client
     client.plugins["xep_0444"] = MagicMock()
@@ -813,18 +927,13 @@ async def test_reaction_lifecycle_from_start_to_success(adapter_instance):
     evt.message_id = "msg-r1"
 
     await adapter_instance.on_processing_start(evt)
-    # XEP-0444 §4: reactions go out via set_reactions() on a typed message
-    # (chat/groupchat), not slixmpp's send_reactions() which omits the type.
-    start_call = client.plugins["xep_0444"].set_reactions.call_args
-    assert start_call.args[1] == "msg-r1"
-    assert start_call.args[2] == ["👀"]
-    assert "msg-r1" in adapter_instance._pending_reactions
+    client.plugins["xep_0444"].set_reactions.assert_not_called()
 
     await adapter_instance.on_processing_complete(evt, ProcessingOutcome.SUCCESS)
     calls = client.plugins["xep_0444"].set_reactions.call_args_list
-    # First call removes 👀, second sends ✅
+    assert len(calls) == 1
+    assert calls[0].args[1] == "msg-r1"
     assert calls[-1].args[2] == ["✅"]
-    assert "msg-r1" not in adapter_instance._pending_reactions
 
 
 @pytest.mark.asyncio
@@ -862,9 +971,7 @@ async def test_reaction_cancelled_sends_no_final(adapter_instance):
     await adapter_instance.on_processing_start(evt)
     await adapter_instance.on_processing_complete(evt, ProcessingOutcome.CANCELLED)
     calls = client.plugins["xep_0444"].set_reactions.call_args_list
-    # Only 👀 was sent; no final reaction
-    assert len(calls) == 1
-    assert calls[0].args[2] == ["👀"]
+    assert len(calls) == 0
 
 
 # -----------------------------------------------------------------
