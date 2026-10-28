@@ -383,7 +383,7 @@ def clear_captured():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case", ["success", "failed", "untrusted", "plaintext", "muc", "muc_private", "prose", "caption"])
+@pytest.mark.parametrize("case", ["success", "failed", "untrusted", "plaintext", "muc", "muc_private", "prose", "caption", "caption_without_uri_line"])
 async def test_inbound_media_trust_and_event_contract(adapter_instance, monkeypatch, tmp_path, caplog, case):
     from types import SimpleNamespace
     from slixmpp.stanza import Message
@@ -404,8 +404,12 @@ async def test_inbound_media_trust_and_event_contract(adapter_instance, monkeypa
     wire["type"] = "groupchat" if case == "muc" else "chat"
     wire["body"], wire["id"] = "fallback", "wire-id"
     plain["body"] = "look at " + uri if case == "prose" else uri + "\ndata:image/jpeg;base64,abc"
-    if case == "caption":
-        plain["body"] = "My caption\n" + uri
+    if case in ("caption", "caption_without_uri_line"):
+        plain["body"] = "My [encrypted attachment] caption\n"
+        if case == "caption":
+            plain["body"] += uri + "\n"
+        plain["body"] += "Unselected " + uri.replace("/file#", "/other#") + "\n"
+        plain["body"] += "Prose " + uri + "\nMalformed aesgcm:secret-key\nEnd caption"
         ET.SubElement(ET.SubElement(plain.xml, "{jabber:x:oob}x"), "{jabber:x:oob}url").text = uri
     if case == "plaintext":
         wire["body"] = plain["body"]
@@ -432,12 +436,19 @@ async def test_inbound_media_trust_and_event_contract(adapter_instance, monkeypa
     assert "ab" * 44 not in event.text
     assert "aesgcm:" not in event.text and "data:image" not in event.text
     assert "ab" * 44 not in caplog.text
+    assert "secret-key" not in event.text and "secret-key" not in caplog.text
     if case in ("success", "caption"):
         assert event.media_urls == [local] and event.media_types == ["image/png"]
         assert event.message_type == "photo"
-        assert event.text == ("My caption" if case == "caption" else "")
+        assert event.text == ("My [encrypted attachment] caption\n"
+            "Unselected [encrypted attachment]\nProse [encrypted attachment]\n"
+            "Malformed [encrypted attachment]\nEnd caption" if case == "caption" else "")
     else:
         assert event.media_urls == [] and event.media_types == []
+        if case == "caption_without_uri_line":
+            assert event.text == ("My [encrypted attachment] caption\n"
+                "Unselected [encrypted attachment]\nProse [encrypted attachment]\n"
+                "Malformed [encrypted attachment]\nEnd caption")
 
 
 @pytest.mark.asyncio

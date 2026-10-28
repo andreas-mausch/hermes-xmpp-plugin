@@ -1235,10 +1235,8 @@ class XmppAdapter(BasePlatformAdapter):
 
             media_urls, media_types = [], []
             uris = attachment_uris(body, getattr(stanza_to_dispatch, "xml", None), sce=sce)
-            safe_body = sanitize(body)
+            safe_body = sanitize("\n".join(line for line in body.strip().splitlines() if line not in uris))
             if uris:
-                for uri in uris:
-                    safe_body = safe_body.replace(sanitize(uri), "").strip()
                 if decrypted and stanza_type != "groupchat" and not self._is_muc(from_bare):
                     for uri in uris:
                         try:
