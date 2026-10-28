@@ -67,6 +67,11 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
+if __package__:
+    from .inbound_media import MediaCache, MediaError, attachment_uris, sanitize
+else:
+    from inbound_media import MediaCache, MediaError, attachment_uris, sanitize
+
 if not _XMPP_DEPS_OK:
     # We can't continue — the imports below are required for the adapter to
     # even parse. Surface a clear error rather than a cryptic ImportError
@@ -593,6 +598,10 @@ class XmppAdapter(BasePlatformAdapter):
         # installs to "chat.example.com", so users are alice@chat.example.com).
         self._known_dms: set[str] = set()
         self._registered_plugins: set[str] = set()
+        self._inbound_media = MediaCache(Path(_hermes_home()) / "cache" / "xmpp-inbound",
+            ttl=float(extra.get("media_ttl_secs") or _scoped_getenv("XMPP_MEDIA_TTL_SECS", "86400")),
+            max_bytes=int(extra.get("media_max_bytes") or _scoped_getenv("XMPP_MEDIA_MAX_BYTES", "26214400")),
+            quota=int(extra.get("media_cache_bytes") or _scoped_getenv("XMPP_MEDIA_CACHE_BYTES", "268435456")))
 
         self._reactions_enabled: bool = os.getenv("XMPP_REACTIONS", "true").lower() not in {"false", "0", "no"}
 
@@ -727,6 +736,7 @@ class XmppAdapter(BasePlatformAdapter):
         # plugins (xep_0030, xep_0045, xep_0199, ...) key their own
         # post-connect setup off for exactly this reason.
         client.add_event_handler("session_bind", self._on_session_bind)
+        client.add_event_handler("session_start", self._mark_session_ready)
         # slixmpp dispatches MUC stanzas to BOTH "message" and
         # "groupchat_message", so registering _on_message for both would run it
         # twice for every group-chat message. Register "message" only — it
@@ -808,6 +818,11 @@ class XmppAdapter(BasePlatformAdapter):
         # a chance to recover a truly-dead connection, without connect()
         # itself ever blocking on it.
         self._connect_watchdog_task = loop.create_task(self._connect_watchdog())
+        if not self._ephemeral_sender:
+            try:
+                self._inbound_media.start()
+            except (OSError, MediaError):
+                logger.warning("xmpp: inbound attachment cache unavailable")
 
         if omemo_ok:
             logger.info("XMPP adapter: OMEMO enabled (storage: %s)", self._omemo_storage_path)
@@ -841,6 +856,7 @@ class XmppAdapter(BasePlatformAdapter):
 
     async def disconnect(self) -> None:
         self._closing = True
+        await self._inbound_media.close()
         if self.client is not None:
             # NOTE: an earlier revision also called
             # self.client.cancel_connection_attempt() here, to abort a
@@ -921,21 +937,21 @@ class XmppAdapter(BasePlatformAdapter):
         logger.info("xmpp: session_bind event received (client set: %s)", self.client is not None)
         await self._mark_session_ready()
 
-    async def _mark_session_ready(self) -> None:
+    async def _mark_session_ready(self, _event: Any = None) -> None:
         """Signal readiness and run post-connect housekeeping, idempotently.
 
-        Called from BOTH "session_bind" and "omemo_initialized" — whichever
-        fires first wins, the other becomes a no-op via _session_established.
+        Called from "session_bind", "session_start" and "omemo_initialized" —
+        whichever fires first wins, the others become no-ops via _session_established.
         omemo_initialized is a deliberate redundant trigger: a production
         connection was observed where session_bind's own readiness signal
         never took effect (cause still under investigation) even though the
         stream was fully authenticated and bound — proven by OMEMO
         initializing successfully on that same connection, since OMEMO
-        cannot initialize without a working, bound stream. Relying on two
+        cannot initialize without a working, bound stream. Relying on multiple
         independent triggers means a single point of failure in either one
         doesn't leave the connection stuck "not ready" forever.
         """
-        if self.client is None or self._session_established:
+        if self.client is None or self._closing or self._session_established:
             return
         self._session_established = True
         # Signal readiness FIRST, before literally anything else in this
@@ -956,6 +972,12 @@ class XmppAdapter(BasePlatformAdapter):
         if self._session_ready is not None:
             self._session_ready.set()
         logger.info("xmpp: marking session ready")
+        if not self._ephemeral_sender:
+            try:
+                # slixmpp can reconnect this client without calling adapter.connect().
+                self._inbound_media.start()
+            except (OSError, MediaError):
+                logger.warning("xmpp: inbound attachment cache unavailable")
         try:
             self.client.send_presence()  # type: ignore[union-attr]
         except Exception:
@@ -1023,6 +1045,7 @@ class XmppAdapter(BasePlatformAdapter):
 
     async def _on_disconnected(self, _event: Any) -> None:
         self._session_established = False
+        await self._inbound_media.close()
         # A deliberate disconnect(), or a failure we have already reported
         # (e.g. failed_all_auth set a fatal error), needs no escalation —
         # just record the disconnect and let the existing status stand.
@@ -1105,12 +1128,17 @@ class XmppAdapter(BasePlatformAdapter):
             # Decryption can replace or mutate the stanza; retain wire receipt metadata.
             wire_id = stanza.get("id")
             wire_xml = getattr(stanza, "xml", None)
+            wire_markable = (
+                wire_xml is not None
+                and wire_xml.find("{urn:xmpp:chat-markers:0}markable") is not None
+            )
             receipt_requested = (
                 wire_xml is not None
                 and wire_xml.find("{urn:xmpp:receipts}request") is not None
                 and wire_xml.find("{urn:xmpp:receipts}received") is None
             )
             decrypted = False
+            sce = False
 
             # OMEMO decryption
             if self.client is not None and "xep_0384" in self._registered_plugins and SLIXMPP_OMEMO_AVAILABLE:
@@ -1118,6 +1146,8 @@ class XmppAdapter(BasePlatformAdapter):
                 xep_0384 = client_local["xep_0384"]
                 if xep_0384.is_encrypted(stanza):
                     try:
+                        sce = (wire_xml is not None and
+                               wire_xml.find("{urn:xmpp:omemo:2}encrypted") is not None)
                         decrypted_stanza, device_info = await xep_0384.decrypt_message(stanza)
                         trusted = device_info.trust_level_name == TrustLevel.TRUSTED.value or (
                             device_info.trust_level_name == TrustLevel.BLINDLY_TRUSTED.value
@@ -1203,7 +1233,24 @@ class XmppAdapter(BasePlatformAdapter):
                     # Fall through: form submission could not be resolved,
                     # treat as normal message if there's a body.
 
-            if not body:
+            media_urls, media_types = [], []
+            uris = attachment_uris(body, getattr(stanza_to_dispatch, "xml", None), sce=sce)
+            safe_body = sanitize(body)
+            if uris:
+                for uri in uris:
+                    safe_body = safe_body.replace(sanitize(uri), "").strip()
+                if decrypted and stanza_type != "groupchat" and not self._is_muc(from_bare):
+                    for uri in uris:
+                        try:
+                            path, mime = await self._inbound_media.fetch(uri)
+                            media_urls.append(path)
+                            media_types.append(mime)
+                        except MediaError:
+                            safe_body += "\n[Encrypted attachment unavailable]"
+                else:
+                    safe_body += "\n[Encrypted attachment not fetched]"
+            body = safe_body.strip()
+            if not body and not media_urls:
                 return
 
             if stanza_type == "groupchat":
@@ -1256,18 +1303,21 @@ class XmppAdapter(BasePlatformAdapter):
                     pass
             event = MessageEvent(
                 text=body,
-                message_type=MessageType.TEXT,
+                message_type=(MessageType.PHOTO if media_types and media_types[0].startswith("image/")
+                              else MessageType.AUDIO if media_types and media_types[0].startswith("audio/")
+                              else MessageType.VIDEO if media_types and media_types[0].startswith("video/")
+                              else MessageType.DOCUMENT if media_types else MessageType.TEXT),
                 source=source,
-                raw_message=stanza_to_dispatch,
-                message_id=stanza.get("id") or None,
-                reply_to_message_id=reply_to_message_id,
-                reply_to_text=reply_to_text,
+                raw_message=None,
+                message_id=(wire_id if isinstance(wire_id, str) and sanitize(wire_id) == wire_id else None),
+                reply_to_message_id=(reply_to_message_id if isinstance(reply_to_message_id, str)
+                                     and sanitize(reply_to_message_id) == reply_to_message_id else None),
+                reply_to_text=sanitize(reply_to_text) if reply_to_text else None,
             )
+            event.media_urls = media_urls
+            event.media_types = media_types
             # Native admission rejects plugin metadata. Keep wire-only hook state local.
-            event._xmpp_markable = (
-                getattr(stanza, "xml", None) is not None
-                and stanza.xml.find("{urn:xmpp:chat-markers:0}markable") is not None
-            )
+            event._xmpp_markable = wire_markable
             await self.handle_message(event)
         except Exception:
             logger.exception("xmpp: error handling inbound stanza")
@@ -1324,7 +1374,7 @@ class XmppAdapter(BasePlatformAdapter):
             if (entry is None or not isinstance(session_key, str) or not session_key
                     or entry.session_key != session_key):
                 return True
-            resolve_gateway_clarify(str(clarify_id), str(answer))
+            resolve_gateway_clarify(str(clarify_id), sanitize(str(answer)))
             return True  # Consume expired/raced submissions too; do not double-route.
         except Exception as exc:
             logger.warning("xmpp: form submission refused (%s)", type(exc).__name__)

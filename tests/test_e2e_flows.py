@@ -58,7 +58,8 @@ class _FakeMessageEvent:
         self.metadata = metadata or {}
 
 gw_base.MessageEvent = _FakeMessageEvent
-gw_base.MessageType = type("MessageType", (), {"TEXT": "text", "IMAGE": "image", "COMMAND": "command"})
+gw_base.MessageType = type("MessageType", (), {"TEXT": "text", "PHOTO": "photo", "AUDIO": "audio",
+    "VIDEO": "video", "DOCUMENT": "document", "IMAGE": "image", "COMMAND": "command"})
 
 class _FakeProcessingOutcome:
     SUCCESS = 0
@@ -265,6 +266,41 @@ def test_forms_fail_closed_without_session_api(adapter_instance, monkeypatch, ca
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("punctuation", ["'", '"', "<", ">"])
+@pytest.mark.parametrize("scheme", ["aesgcm", "AESGCM", "AeSgCm"])
+async def test_punctuated_media_secrets_redacted_in_all_input_contexts(
+        adapter_instance, monkeypatch, caplog, punctuation, scheme):
+    import types
+    a = adapter_instance
+    a._omemo_enabled = False
+    a.handle_message = AsyncMock()
+    secret = "ab" * 44
+    uri = scheme + "://files.example.org/f" + punctuation + "x#" + secret
+    text = "caption " + uri + " tail"
+    expected = "caption [encrypted attachment] tail"
+    reply = types.SimpleNamespace(
+        get=lambda key, default=None: "prior-id" if key == "id" else default,
+        strip_fallback_content=lambda: text)
+    await a._on_message(_make_stanza(type="chat", body=text, reply=reply))
+    event = a.handle_message.await_args.args[0]
+    assert event.text == expected
+    assert event.reply_to_text == expected
+    assert event.raw_message is None
+
+    module = types.ModuleType("tools.clarify_gateway")
+    module.get_pending = lambda cid: types.SimpleNamespace(session_key="opaque-owner")
+    module.resolve_gateway_clarify = MagicMock()
+    monkeypatch.setitem(sys.modules, "tools.clarify_gateway", module)
+    a._source_session_key = lambda source: "opaque-owner"
+    form = MagicMock()
+    form.get_fields.return_value = {}
+    form.get_values.return_value = {"clarify_id": "prompt-id", "answer": text}
+    assert a._handle_form_submission(form, types.SimpleNamespace())
+    module.resolve_gateway_clarify.assert_called_once_with("prompt-id", expected)
+    assert secret not in caplog.text
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("sender,accepted", [
     ("attacker@example.org/phone", False),
     ("unknown@conference.example.org/nick", False),
@@ -344,6 +380,76 @@ def clear_captured():
     captured_handle_calls.clear()
     yield
     captured_handle_calls.clear()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["success", "failed", "untrusted", "plaintext", "muc", "muc_private", "prose", "caption"])
+async def test_inbound_media_trust_and_event_contract(adapter_instance, monkeypatch, tmp_path, caplog, case):
+    from types import SimpleNamespace
+    from slixmpp.stanza import Message
+    from slixmpp.xmlstream import ET
+    from inbound_media import MediaError
+    a = adapter_instance
+    a._omemo_enabled = True
+    a._registered_plugins.add("xep_0384")
+    a.handle_message = AsyncMock()
+    monkeypatch.setenv("XMPP_REQUIRE_OMEMO_INBOUND", "false")
+    monkeypatch.setattr(adapter, "SLIXMPP_OMEMO_AVAILABLE", True)
+    monkeypatch.setattr(adapter, "TrustLevel", SimpleNamespace(
+        TRUSTED=SimpleNamespace(value="TRUSTED"), UNDECIDED=SimpleNamespace(value="UNDECIDED"),
+        BLINDLY_TRUSTED=SimpleNamespace(value="BLINDLY_TRUSTED")))
+    uri = "aesgcm://files.example.org/file#" + "ab" * 44
+    wire, plain = Message(), Message()
+    wire["from"] = "room@conference.example.org/alice" if case in ("muc", "muc_private") else "user@example.org/phone"
+    wire["type"] = "groupchat" if case == "muc" else "chat"
+    wire["body"], wire["id"] = "fallback", "wire-id"
+    plain["body"] = "look at " + uri if case == "prose" else uri + "\ndata:image/jpeg;base64,abc"
+    if case == "caption":
+        plain["body"] = "My caption\n" + uri
+        ET.SubElement(ET.SubElement(plain.xml, "{jabber:x:oob}x"), "{jabber:x:oob}url").text = uri
+    if case == "plaintext":
+        wire["body"] = plain["body"]
+    plugin = MagicMock()
+    plugin.is_encrypted.return_value = case != "plaintext"
+    plugin.decrypt_message = AsyncMock(return_value=(plain, SimpleNamespace(
+        trust_level_name="UNDECIDED" if case == "untrusted" else "TRUSTED",
+        bare_jid="user@example.org", identity_key=b"identity", device_id=1)))
+    plugin.get_session_manager = AsyncMock(return_value=SimpleNamespace(set_trust=AsyncMock()))
+    a.client.plugins["xep_0384"] = plugin
+    local = str(tmp_path / "image.png")
+    a._inbound_media.fetch = AsyncMock(return_value=(local, "image/png"))
+    if case == "failed":
+        a._inbound_media.fetch.side_effect = MediaError("Attachment unavailable")
+    await a._on_message(wire)
+    fetch = case in ("success", "failed", "caption")
+    assert a._inbound_media.fetch.await_count == int(fetch)
+    if case == "untrusted":
+        assert not a.handle_message.await_count
+        return
+    event = a.handle_message.await_args.args[0]
+    assert event.metadata == {}
+    assert event.raw_message is None
+    assert "ab" * 44 not in event.text
+    assert "aesgcm:" not in event.text and "data:image" not in event.text
+    assert "ab" * 44 not in caplog.text
+    if case in ("success", "caption"):
+        assert event.media_urls == [local] and event.media_types == ["image/png"]
+        assert event.message_type == "photo"
+        assert event.text == ("My caption" if case == "caption" else "")
+    else:
+        assert event.media_urls == [] and event.media_types == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unexpected", [False, True])
+async def test_inbound_media_stops_with_adapter(adapter_instance, unexpected):
+    a = adapter_instance
+    a._inbound_media.close = AsyncMock()
+    if unexpected:
+        await a._on_disconnected(None)
+    else:
+        await a.disconnect()
+    a._inbound_media.close.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -1005,12 +1111,13 @@ async def test_delivery_receipt_omemo_validation(adapter_instance, monkeypatch, 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mutate_wire", [False, True])
 @pytest.mark.parametrize("markable,trusted,decrypt_fails", [
     (True, True, False), (False, True, False),
     (True, False, False), (True, True, True),
 ])
 async def test_displayed_omemo_uses_original_metadata(
-    adapter_instance, monkeypatch, markable, trusted, decrypt_fails,
+    adapter_instance, monkeypatch, markable, trusted, decrypt_fails, mutate_wire,
 ):
     from slixmpp import ClientXMPP, Message
     from types import SimpleNamespace
@@ -1040,6 +1147,17 @@ async def test_displayed_omemo_uses_original_metadata(
     omemo.decrypt_message = AsyncMock(return_value=(decrypted, SimpleNamespace(
         trust_level_name="TRUSTED" if trusted else "DISTRUSTED", device_id=1,
     )))
+    if mutate_wire:
+        async def decrypt(stanza):
+            from slixmpp.xmlstream import ET
+            tag = "{urn:xmpp:chat-markers:0}markable"
+            if markable:
+                stanza.xml.remove(stanza.xml.find(tag))
+            else:
+                ET.SubElement(stanza.xml, tag)
+            return decrypted, SimpleNamespace(
+                trust_level_name="TRUSTED" if trusted else "DISTRUSTED", device_id=1)
+        omemo.decrypt_message.side_effect = decrypt
     if decrypt_fails:
         omemo.decrypt_message.side_effect = RuntimeError("decrypt failed")
     a.client.plugins["xep_0384"] = omemo

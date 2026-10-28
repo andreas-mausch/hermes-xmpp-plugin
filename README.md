@@ -20,6 +20,8 @@ to land. It supports:
 - XEP-0444 message reactions (✅/❌ for processing completion)
 - XEP-0447 stateless file sharing for voice messages
 - OMEMO end-to-end encryption (enabled by default, needs optional dependencies)
+- Secure inbound XEP-0454 decryption to private local files, with a 24-hour
+  plugin cache lifetime; see [formats, security and retention limits](docs/inbound-media.md)
 - cron and `send_message` delivery through a standalone sender hook
 - Hermes platform plugin registration via `ctx.register_platform(...)`
 
