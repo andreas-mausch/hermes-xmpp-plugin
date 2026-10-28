@@ -1,4 +1,7 @@
-# XMPP OMEMO: Computing X25519 Fingerprints from a Trust Store
+# OMEMO Security, Fingerprints and Trust
+
+This guide covers the adapter's OMEMO security policy, device trust maintenance,
+and a technical reference for computing and comparing device fingerprints.
 
 ## Scope
 
@@ -39,13 +42,39 @@ Legacy Signal serialization prefixes the X25519 key with a key-type byte:
 `0x05 || u`. Gajim's fingerprint extraction removes that prefix. This does not
 mean that all OMEMO clients internally start with an Ed25519 key.
 
-## Reading an Adapter Store
+## OMEMO Security Policy
 
-For routine operations, prefer the tested `python -m omemo_trust` CLI and
-[new-device runbook](omemo-new-device-trust-runbook.md). The CLI uses the existing
-XEdDSA vetted conversion API and requires explicit offline acknowledgement for
-mutations. The formula and read-only snippet below remain a technical reference,
-not the recommended maintenance route.
+OMEMO is enabled by default. Direct-message bodies, corrections and clarify
+questions fail closed if encryption is unavailable or fails. Plaintext direct
+messages, including bodyless form submissions, are ignored by default while
+OMEMO is configured. Set `XMPP_OMEMO_ENABLED=false` only to intentionally use
+plaintext for both directions.
+OMEMO clarifications use numbered encrypted text, not legacy data forms.
+Form submissions in plaintext mode are checked against the allow-list and the
+owning gateway session. Only known/configured MUC rooms receive groupchat
+exemptions, even when `XMPP_ALLOW_ALL_USERS=true`.
+
+`XMPP_REQUIRE_OMEMO_INBOUND=0` (also `false` or `no`, case-insensitive) allows
+authorized plaintext direct input while OMEMO remains configured. This is an
+inbound-only debugging override: plaintext bodies and bodyless form submissions
+are unauthenticated and can be injected by the server. The default is strict;
+empty or unrecognized values do not disable it. The override does not relax
+outbound encryption, device trust checks, decryption failures or authorization.
+Sibling forms on encrypted direct messages remain ignored, because legacy
+OMEMO does not authenticate them. When OMEMO is disabled, plaintext input
+continues to work regardless of this setting. MUC behavior is unchanged.
+
+MUC text behavior is unchanged. Legacy OMEMO protects bodies, not all stanza
+metadata: corrections, reactions, typing, retractions and sibling extensions
+are not covered by a blanket authenticity guarantee. Legacy data forms are
+never acted on beside an encrypted direct-message body, even with the inbound
+plaintext override enabled.
+
+## Device Trust
+
+Blind trust is off by default (`XMPP_OMEMO_BTBV=false`). Trust applies to a
+contact's recorded OMEMO device identity, not their whole account; verify each
+device's fingerprint independently before granting trust.
 
 Persisted trust grades are not always effective trust. Explicit `TRUSTED`
 decisions remain effective; `BLINDLY_TRUSTED` is accepted only with BTBV enabled
@@ -55,12 +84,47 @@ devices `DISTRUSTED`. BTBV is an outbound trust-decision policy: enabling it doe
 not automatically promote incoming `UNDECIDED` devices. Incoming OMEMO DMs
 require effective trust even after successful decryption.
 
+To discover a new identity safely, authorize the client's bare JID, wait for
+OMEMO initialization, and send a non-sensitive encrypted test message from a
+client with usable published device keys and an available bundle. An untrusted
+message is discarded, not queued for replay. A failed first message does not
+guarantee discovery; do not enable blind trust or fabricate an identity if none
+is listed. Follow [First Trusted Device](../README.md#first-trusted-device) and
+the [new-device runbook](omemo-new-device-trust-runbook.md) for the discovery and
+verification workflow and troubleshooting.
+
+## Trust CLI
+
+For offline trust maintenance, run the argparse CLI from this repository using
+the adapter's Python environment with the optional OMEMO dependencies installed:
+
+```bash
+python -m omemo_trust --store /actual/path/xmpp_omemo.json list --jid alice@example.org
+python -m omemo_trust --store /actual/path/xmpp_omemo.json trust --offline --jid alice@example.org --device-id 1001 --fingerprint 'INDEPENDENTLY VERIFIED 64 HEX CHARACTERS'
+python -m omemo_trust --store /actual/path/xmpp_omemo.json distrust --offline --jid alice@example.org --device-id 1001
+```
+
+Stop **all writers** first: the adapter caches the store and can overwrite edits.
+`--offline` is an acknowledgement, not a lock, writer detection or shutdown.
+`list` is only a snapshot. Trust requires an independently verified fingerprint
+matching an existing recorded identity; missing identities are refused.
+Mutations create private backups **containing secrets**. Select the actual store
+with `--store`; the CLI does not load adapter configuration or `.env`.
+
 The [runbook](omemo-new-device-trust-runbook.md) covers identity discovery and
 per-JID/identity trust, creating missing trust entries for existing identities,
 canonical unsigned-32 remote device IDs, actual store selection and path defaults,
 and offline maintenance. It also documents secret-bearing backups, atomic
 replacement, ownership/mode preservation and the loss of custom ACLs/extended
 attributes. Follow those safeguards rather than editing a live store.
+
+## Reading an Adapter Store
+
+For routine operations, prefer the tested [Trust CLI](#trust-cli) and
+[new-device runbook](omemo-new-device-trust-runbook.md). The CLI uses the existing
+XEdDSA vetted conversion API and requires explicit offline acknowledgement for
+mutations. The formula and read-only snippet below remain a technical reference,
+not the recommended maintenance route.
 
 The checked adapter/dependency combination uses a flat JSON key-value store
 with these paths (see verification provenance below):

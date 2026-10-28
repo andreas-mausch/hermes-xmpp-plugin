@@ -35,11 +35,13 @@ media is supported only for 1:1 chats.
 Compared with [fastfinge/hermes-xmpp-plugin](https://github.com/fastfinge/hermes-xmpp-plugin)
 at `d01087a` (upstream HEAD checked on 2026-10-27):
 
-- **Message security:** With OMEMO enabled, plaintext DM input is rejected by default,
+- **[Message security](docs/omemo-fingerprints-and-trust-guide.md#omemo-security-policy):**
+  With OMEMO enabled, plaintext DM input is rejected by default,
   with an inbound-only debugging override. Outgoing text, edits and clarify prompts fail closed.
-- **[Device trust](#device-trust):** Blind trust is off by default; incoming OMEMO DMs
-  require trusted identities.
-- **[Trust CLI](#trust-cli):** An argparse CLI lists devices and grants or revokes trust
+- **[Device trust](docs/omemo-fingerprints-and-trust-guide.md#device-trust):**
+  Blind trust is off by default; incoming OMEMO DMs require trusted identities.
+- **[Trust CLI](docs/omemo-fingerprints-and-trust-guide.md#trust-cli):**
+  An argparse CLI lists devices and grants or revokes trust
   offline. Grants require a fingerprint independently verified by the operator;
   XEdDSA converts the stored key
   for comparison. Validated store updates use private backups and atomic replacement;
@@ -147,7 +149,8 @@ Risky opt-outs, not part of the minimal setup:
 - `XMPP_OMEMO_BTBV=true` enables blind trust for devices, not verified trust.
 - `XMPP_OMEMO_MEDIA=false` disables upload sealing, including for MUC media; DM links still use OMEMO when enabled.
 
-See [OMEMO Security Policy](#omemo-security-policy), [Encrypted Media](#encrypted-media)
+See [OMEMO Security Policy](docs/omemo-fingerprints-and-trust-guide.md#omemo-security-policy),
+[Encrypted Media](#encrypted-media)
 and the [new-device trust runbook](docs/omemo-new-device-trust-runbook.md)
 for the security implications and trust setup.
 
@@ -213,7 +216,7 @@ falling back to plaintext.
 MUC text is plaintext at the OMEMO layer (still transported over TLS), even when
 OMEMO is enabled. Encrypted media is unsupported in MUCs and fails before upload
 with the default media setting. See [Encrypted Media](#encrypted-media) for the
-explicit plain-upload opt-out and [OMEMO Security Policy](#omemo-security-policy)
+explicit plain-upload opt-out and [OMEMO Security Policy](docs/omemo-fingerprints-and-trust-guide.md#omemo-security-policy)
 for encryption rules. Before your first successful DM, follow
 [First Trusted Device](#first-trusted-device); device trust is required by default.
 
@@ -263,7 +266,8 @@ device publication and bundle availability. A failed first message does not
 guarantee identity discovery. `--offline` only acknowledges that writers are
 stopped; it does not stop them or acquire a lock.
 
-See [Trust CLI](#trust-cli) for store selection, backups and revocation, and the
+See [Trust CLI](docs/omemo-fingerprints-and-trust-guide.md#trust-cli) for store
+selection, backups and revocation, and the
 [new-device trust runbook](docs/omemo-new-device-trust-runbook.md) for detailed
 discovery troubleshooting and container maintenance.
 
@@ -444,69 +448,6 @@ For testing against a real Hermes checkout, set `PYTHONPATH`:
 ```bash
 PYTHONPATH=/path/to/hermes-agent python -m pytest -q
 ```
-
-## OMEMO Security Policy
-
-OMEMO is enabled by default. Direct-message bodies, corrections and clarify
-questions fail closed if encryption is unavailable or fails. Plaintext direct
-messages, including bodyless form submissions, are ignored by default while
-OMEMO is configured. Set `XMPP_OMEMO_ENABLED=false` only to intentionally use
-plaintext for both directions.
-OMEMO clarifications use numbered encrypted text, not legacy data forms.
-Form submissions in plaintext mode are checked against the allow-list and the
-owning gateway session. Only known/configured MUC rooms receive groupchat
-exemptions, even when `XMPP_ALLOW_ALL_USERS=true`.
-
-`XMPP_REQUIRE_OMEMO_INBOUND=0` (also `false` or `no`, case-insensitive) allows
-authorized plaintext direct input while OMEMO remains configured. This is an
-inbound-only debugging override: plaintext bodies and bodyless form submissions
-are unauthenticated and can be injected by the server. The default is strict;
-empty or unrecognized values do not disable it. The override does not relax
-outbound encryption, device trust checks, decryption failures or authorization.
-Sibling forms on encrypted direct messages remain ignored, because legacy
-OMEMO does not authenticate them. When OMEMO is disabled, plaintext input
-continues to work regardless of this setting. MUC behavior is unchanged.
-
-MUC text behavior is unchanged. Legacy OMEMO protects bodies, not all stanza
-metadata: corrections, reactions, typing, retractions and sibling extensions
-are not covered by a blanket authenticity guarantee. Legacy data forms are
-never acted on beside an encrypted direct-message body, even with the inbound
-plaintext override enabled.
-
-## Device Trust
-
-Blind trust is off by default. Incoming OMEMO DMs require effective device trust,
-not just successful decryption: `TRUSTED` is accepted; `BLINDLY_TRUSTED` is accepted
-only with `XMPP_OMEMO_BTBV=true` and is not verified trust. BTBV is an outbound
-trust-decision policy, not automatic approval of incoming `UNDECIDED` devices.
-
-Verify the fingerprint independently before granting trust with the [Trust CLI](#trust-cli).
-Authorized test messages can discover published identities, but untrusted messages
-are discarded and discovery is not guaranteed. See [First Trusted Device](#first-trusted-device),
-the [fingerprint and trust guide](docs/omemo-fingerprints-and-trust-guide.md) and
-[new-device trust runbook](docs/omemo-new-device-trust-runbook.md) for details.
-
-## Trust CLI
-
-For offline trust maintenance, run the argparse CLI from this repository using
-the adapter's Python environment with the optional OMEMO dependencies installed:
-
-```bash
-python -m omemo_trust --store /actual/path/xmpp_omemo.json list --jid alice@example.org
-python -m omemo_trust --store /actual/path/xmpp_omemo.json trust --offline --jid alice@example.org --device-id 1001 --fingerprint 'INDEPENDENTLY VERIFIED 64 HEX CHARACTERS'
-python -m omemo_trust --store /actual/path/xmpp_omemo.json distrust --offline --jid alice@example.org --device-id 1001
-```
-
-Stop **all writers** first: the adapter caches the store and can overwrite edits.
-`--offline` is an acknowledgement, not a lock, writer detection or shutdown.
-`list` is only a snapshot. Trust requires an independently verified fingerprint
-matching an existing recorded identity; missing identities are refused.
-Mutations create private backups **containing secrets**. Select the actual store
-with `--store`; the CLI does not load adapter configuration or `.env`.
-
-See the [fingerprint and trust guide](docs/omemo-fingerprints-and-trust-guide.md)
-and [new-device trust runbook](docs/omemo-new-device-trust-runbook.md) for trust
-semantics, ID bounds, path defaults, backup handling and ACL limitations.
 
 ## Encrypted Media
 

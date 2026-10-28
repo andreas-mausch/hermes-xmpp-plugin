@@ -11,7 +11,7 @@ policy enables OMEMO, disables Blind Trust Before Verification (BTBV), and
 requires effective device trust for incoming direct messages. Outbound manual
 trust handling can mark undecided devices `DISTRUSTED`. Grant `TRUSTED` only
 after independent verification. Confirm your deployed adapter and configuration
-match the [security policy](../README.md#omemo-security-policy).
+match the [security policy](omemo-fingerprints-and-trust-guide.md#omemo-security-policy).
 
 Use `python -m omemo_trust` from this repository directory, with the same Python
 environment and optional OMEMO dependencies as the adapter. The CLI uses
