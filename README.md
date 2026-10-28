@@ -50,19 +50,12 @@ at `d01087a` (upstream HEAD checked on 2026-10-27):
   links. Captions are separately encrypted; links stay intact. Sealing is global, unsupported
   targets including MUCs fail before upload, and sealed uploads pass only the file basename.
 - **Incoming media:** At the upstream baseline, incoming file URLs remain `TEXT`, with no
-  attachment download or populated media fields, whether the message uses OMEMO or not.
-  This fork downloads and decrypts supported XEP-0454 attachments from authorized, trusted
-  OMEMO DMs before handing them to Hermes as local `media_urls` and content-derived
-  `media_types`. Images use `PHOTO`, video uses `VIDEO`, and other files use `DOCUMENT`.
-  Audio uses `VOICE` so Hermes can automatically transcribe it; this deliberately includes
-  music and does not infer whether an audio file is a voice note. Captions are preserved,
-  while encryption URLs, keys and thumbnails are removed from dispatched text and raw
-  stanzas are withheld. Public-HTTPS-only downloads have size, concurrency and cache limits.
-  Files are private (`0600`, directory `0700`), with startup and periodic cleanup after a
-  default 24-hour lifetime. That lifetime covers only the plugin cache, not Hermes-retained
-  copies. Plaintext and MUC attachments are not fetched; OMEMO:2/SCE and other unsupported
-  transfer formats are not delegated to the agent for decryption. See
-  [Inbound Encrypted Attachments](docs/inbound-media.md) for supported formats and limits.
+  attachment download. This fork decrypts supported XEP-0454 attachments from authorized,
+  trusted OMEMO DMs into local media: `PHOTO`, `VOICE`, `VIDEO` or `DOCUMENT`.
+  All audio, including music, uses `VOICE` for automatic transcription; voice notes are
+  not inferred. Captions remain, but encryption URLs, keys and thumbnails are removed
+  from dispatched text and raw stanzas are withheld. See
+  [Inbound Encrypted Attachments](docs/inbound-media.md) for formats, security and retention limits.
 - **Message status:** XEP-0184 receipts acknowledge requested, validated direct messages
   before dispatch. XEP-0333 displayed markers acknowledge markable direct messages when
   processing starts, replacing the eyes reaction without a fallback. Completion reactions
@@ -482,22 +475,16 @@ plaintext override enabled.
 
 ## Device Trust
 
-New devices are not blindly trusted by default. `XMPP_OMEMO_BTBV=true` opts
-into blind trust. Explicitly `TRUSTED` decisions remain effective. The
-dependency treats `BLINDLY_TRUSTED` as undecided when BTBV is off; outbound
-manual-trust handling can mark such devices `DISTRUSTED`. With all store
-writers stopped, use the [Trust CLI](#trust-cli) to set the existing identity's
-trust to `TRUSTED` after verifying the fingerprint out of band, then restart. `BLINDLY_TRUSTED`
-is accepted only with BTBV enabled, and is not verified trust. Incoming direct
-messages require effective device trust, not just successful decryption.
+Blind trust is off by default. Incoming OMEMO DMs require effective device trust,
+not just successful decryption: `TRUSTED` is accepted; `BLINDLY_TRUSTED` is accepted
+only with `XMPP_OMEMO_BTBV=true` and is not verified trust. BTBV is an outbound
+trust-decision policy, not automatic approval of incoming `UNDECIDED` devices.
 
-BTBV is an outbound trust-decision policy, not automatic inbound approval:
-turning it on does not promote an incoming `UNDECIDED` device. Successfully
-decrypted untrusted DMs are discarded; `UNDECIDED` is persisted for discovery.
-The dependency records real bundle identities before decryption. Discovery
-requires authorization, initialized OMEMO, a published/downloadable bundle and
-usable key material. A decryption failure may leave a recorded identity without
-a trust entry, or no identity at all. No identity is fabricated.
+Verify the fingerprint independently before granting trust with the [Trust CLI](#trust-cli).
+Authorized test messages can discover published identities, but untrusted messages
+are discarded and discovery is not guaranteed. See [First Trusted Device](#first-trusted-device),
+the [fingerprint and trust guide](docs/omemo-fingerprints-and-trust-guide.md) and
+[new-device trust runbook](docs/omemo-new-device-trust-runbook.md) for details.
 
 ## Trust CLI
 
@@ -511,20 +498,15 @@ python -m omemo_trust --store /actual/path/xmpp_omemo.json distrust --offline --
 ```
 
 Stop **all writers** first: the adapter caches the store and can overwrite edits.
-`--offline` acknowledges this; it does not detect writers or stop them. `list`
-is only a snapshot and warns about live reads. Trust requires an independently
-verified fingerprint matching an existing recorded identity. A missing trust
-entry can be created for that identity by either `trust` or `distrust`; missing
-identities are refused. Remote device IDs accept canonical decimal integers
-`1..4294967295` and sort numerically. This unsigned wire/store acceptance does
-not change the dependency's signed-32 local ID generation; zero is excluded.
-Mutations make a private backup containing secrets and atomically preserve store mode and
-ownership; custom ACLs/extended attributes are not preserved. Without `--store`,
-the CLI uses `XMPP_OMEMO_STORAGE_PATH` or `xmpp_omemo.json` under the resolved
-Hermes home. It does not load adapter configuration or `.env`.
+`--offline` is an acknowledgement, not a lock, writer detection or shutdown.
+`list` is only a snapshot. Trust requires an independently verified fingerprint
+matching an existing recorded identity; missing identities are refused.
+Mutations create private backups **containing secrets**. Select the actual store
+with `--store`; the CLI does not load adapter configuration or `.env`.
 
-For operator procedures, see the [fingerprint and trust guide](docs/omemo-fingerprints-and-trust-guide.md)
-and [new-device trust runbook](docs/omemo-new-device-trust-runbook.md).
+See the [fingerprint and trust guide](docs/omemo-fingerprints-and-trust-guide.md)
+and [new-device trust runbook](docs/omemo-new-device-trust-runbook.md) for trust
+semantics, ID bounds, path defaults, backup handling and ACL limitations.
 
 ## Encrypted Media
 

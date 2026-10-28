@@ -47,6 +47,21 @@ XEdDSA vetted conversion API and requires explicit offline acknowledgement for
 mutations. The formula and read-only snippet below remain a technical reference,
 not the recommended maintenance route.
 
+Persisted trust grades are not always effective trust. Explicit `TRUSTED`
+decisions remain effective; `BLINDLY_TRUSTED` is accepted only with BTBV enabled
+and does not mean independently verified. With BTBV off, the dependency treats
+`BLINDLY_TRUSTED` as undecided, and outbound manual-trust handling can mark those
+devices `DISTRUSTED`. BTBV is an outbound trust-decision policy: enabling it does
+not automatically promote incoming `UNDECIDED` devices. Incoming OMEMO DMs
+require effective trust even after successful decryption.
+
+The [runbook](omemo-new-device-trust-runbook.md) covers identity discovery and
+per-JID/identity trust, creating missing trust entries for existing identities,
+canonical unsigned-32 remote device IDs, actual store selection and path defaults,
+and offline maintenance. It also documents secret-bearing backups, atomic
+replacement, ownership/mode preservation and the loss of custom ACLs/extended
+attributes. Follow those safeguards rather than editing a live store.
+
 The checked adapter/dependency combination uses a flat JSON key-value store
 with these paths (see verification provenance below):
 
