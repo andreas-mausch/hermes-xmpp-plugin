@@ -63,7 +63,7 @@ at `d01087a` (upstream HEAD checked on 2026-10-27):
   processing starts, replacing the eyes reaction without a fallback. Completion reactions
   remain success/failure indicators. The bot does not request or track user read/delivery
   confirmations; receiving, starting processing and finishing processing are distinct states.
-- **Display name:** XEP-0172 names support config, environment and a Hermes-home file fallback.
+- **[Display name](#display-name-xep-0172):** XEP-0172 names support config, environment and a Hermes-home file fallback.
   Available and subscribe presence advertise the name; authorized subscriptions refresh presence.
 
 ## Credits
@@ -434,6 +434,19 @@ The adapter registers ad-hoc commands on the bot's JID. Users can discover them
 with their client's command list (e.g., `/cmd` in Conversations). Currently a
 basic command list is exposed; future releases may add Hermes-specific commands.
 
+### Display Name (XEP-0172)
+
+Set `display_name` in XMPP YAML/extra or `XMPP_DISPLAY_NAME` to advertise a
+XEP-0172 nickname in available and subscribe presence. Extra takes precedence
+over environment. If neither supplies a nonblank name, the adapter reads
+the UTF-8 file `xmpp_display_name` in Hermes home (resolved by `hermes_home`).
+Missing or unreadable files are ignored. Existing nickname elements are kept;
+unavailable, probe and subscription-approval stanzas are not stamped.
+
+Presence is refreshed after authorized subscription requests or approvals.
+Clients may require mutual presence subscriptions to display the nickname;
+this does not change the account JID, MUC nickname or vCard.
+
 ## Development
 
 The test suite runs standalone — no Hermes checkout required. It uses mocks for the
@@ -448,16 +461,3 @@ For testing against a real Hermes checkout, set `PYTHONPATH`:
 ```bash
 PYTHONPATH=/path/to/hermes-agent python -m pytest -q
 ```
-
-## Display Name
-
-Set `display_name` in XMPP YAML/extra or `XMPP_DISPLAY_NAME` to advertise a
-XEP-0172 nickname in available and subscribe presence. Extra takes precedence
-over environment. If neither supplies a nonblank name, the adapter reads
-the UTF-8 file `xmpp_display_name` in Hermes home (resolved by `hermes_home`).
-Missing or unreadable files are ignored. Existing nickname elements are kept;
-unavailable, probe and subscription-approval stanzas are not stamped.
-
-Presence is refreshed after authorized subscription requests or approvals.
-Clients may require mutual presence subscriptions to display the nickname;
-this does not change the account JID, MUC nickname or vCard.
