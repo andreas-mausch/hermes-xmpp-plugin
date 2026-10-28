@@ -40,9 +40,28 @@ at `d01087a` (upstream HEAD checked on 2026-10-27):
 - **Device trust:** Blind trust is off by default; incoming OMEMO DMs require trusted identities.
 - **Clarifications and forms:** OMEMO prompts use encrypted numbered text. Form submissions
   require authorization; encrypted DMs ignore unauthenticated sibling forms.
-- **Media:** Files, images, video and voice support AES-256-GCM sealing and encrypted XEP-0454
+- **Outgoing media:** Files, images, video and voice support AES-256-GCM sealing and encrypted XEP-0454
   links. Captions are separately encrypted; links stay intact. Sealing is global, unsupported
   targets including MUCs fail before upload, and sealed uploads pass only the file basename.
+- **Incoming media:** At the upstream baseline, incoming file URLs remain `TEXT`, with no
+  attachment download or populated media fields, whether the message uses OMEMO or not.
+  This fork downloads and decrypts supported XEP-0454 attachments from authorized, trusted
+  OMEMO DMs before handing them to Hermes as local `media_urls` and content-derived
+  `media_types`. Images use `PHOTO`, video uses `VIDEO`, and other files use `DOCUMENT`.
+  Audio uses `VOICE` so Hermes can automatically transcribe it; this deliberately includes
+  music and does not infer whether an audio file is a voice note. Captions are preserved,
+  while encryption URLs, keys and thumbnails are removed from dispatched text and raw
+  stanzas are withheld. Public-HTTPS-only downloads have size, concurrency and cache limits.
+  Files are private (`0600`, directory `0700`), with startup and periodic cleanup after a
+  default 24-hour lifetime. That lifetime covers only the plugin cache, not Hermes-retained
+  copies. Plaintext and MUC attachments are not fetched; OMEMO:2/SCE and other unsupported
+  transfer formats are not delegated to the agent for decryption. See
+  [Inbound Encrypted Attachments](docs/inbound-media.md) for supported formats and limits.
+- **Message status:** XEP-0184 receipts acknowledge requested, validated direct messages
+  before dispatch. XEP-0333 displayed markers acknowledge markable direct messages when
+  processing starts, replacing the eyes reaction without a fallback. Completion reactions
+  remain success/failure indicators. The bot does not request or track user read/delivery
+  confirmations; receiving, starting processing and finishing processing are distinct states.
 - **Trust CLI:** An argparse CLI lists devices and grants or revokes trust offline. Grants
   require a fingerprint independently verified by the operator; XEdDSA converts the stored key
   for comparison. Validated store updates use private backups and atomic replacement;
@@ -51,7 +70,8 @@ at `d01087a` (upstream HEAD checked on 2026-10-27):
   Available and subscribe presence advertise the name; authorized subscriptions refresh presence.
 - **Documentation and tests:** Updated configuration examples and operator guides explain
   profile paths, precedence, opt-outs, fingerprints, trust and deployment limits.
-  Regression coverage extends the upstream suite beyond 320 tests.
+  Regression coverage includes media cryptography, download security, cache lifecycle,
+  event classification and message-status behavior in addition to the upstream suite.
 
 ## Credits
 
