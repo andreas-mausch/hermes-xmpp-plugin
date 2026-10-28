@@ -263,6 +263,59 @@ def _make_cfg(**extra):
     return cfg
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reconnect_event", ["session_start", "session_bind"])
+async def test_auto_reconnect_restarts_media_cache_without_duplicate_sweepers(
+        monkeypatch, tmp_path, reconnect_event):
+    from inbound_media import MediaError
+    monkeypatch.setattr(adapter, "_hermes_home", lambda: str(tmp_path))
+    monkeypatch.setattr(adapter, "ClientXMPP", _FakeSlixmppClient)
+    a = adapter.XmppAdapter(_make_cfg())
+    assert await a.connect()
+    client = a.client
+    cache = a._inbound_media
+    cache._fetch = AsyncMock(return_value=(str(tmp_path / "media.png"), "image/png"))
+    try:
+        initial_sweeper = cache._sweeper
+        await client.fire("session_bind")
+        await client.fire("session_start")
+        assert cache._sweeper is initial_sweeper
+        assert await cache.fetch("attachment") == (str(tmp_path / "media.png"), "image/png")
+
+        await client.fire("disconnected")
+        assert initial_sweeper.cancelled()
+        assert cache._sweeper is None and cache._fd is None
+        with pytest.raises(MediaError):
+            await cache.fetch("attachment")
+
+        # Automatic reconnect keeps the same client and never calls adapter.connect().
+        await client.fire(reconnect_event)
+        restarted_sweeper = cache._sweeper
+        assert restarted_sweeper is not None and restarted_sweeper is not initial_sweeper
+        assert not restarted_sweeper.done()
+        assert await cache.fetch("attachment") == (str(tmp_path / "media.png"), "image/png")
+        await client.fire("session_start")
+        await client.fire("session_bind")
+        assert cache._sweeper is restarted_sweeper
+        assert len(client.connect_calls) == 1
+    finally:
+        await a.disconnect()
+    assert restarted_sweeper.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_late_session_start_does_not_restart_closed_cache(monkeypatch, tmp_path):
+    monkeypatch.setattr(adapter, "_hermes_home", lambda: str(tmp_path))
+    monkeypatch.setattr(adapter, "ClientXMPP", _FakeSlixmppClient)
+    a = adapter.XmppAdapter(_make_cfg())
+    assert await a.connect()
+    client = a.client
+    await a.disconnect()
+    await client.fire("session_start")
+    assert a._inbound_media._sweeper is None
+    assert a._inbound_media._fd is None
+
+
 @pytest.fixture(autouse=True)
 def _reset_state():
     acquire_calls.clear()
