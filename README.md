@@ -68,10 +68,6 @@ at `d01087a` (upstream HEAD checked on 2026-10-27):
   listings are aligned and device IDs sorted numerically.
 - **Display name:** XEP-0172 names support config, environment and a Hermes-home file fallback.
   Available and subscribe presence advertise the name; authorized subscriptions refresh presence.
-- **Documentation and tests:** Updated configuration examples and operator guides explain
-  profile paths, precedence, opt-outs, fingerprints, trust and deployment limits.
-  Regression coverage includes media cryptography, download security, cache lifecycle,
-  event classification and message-status behavior in addition to the upstream suite.
 
 ## Credits
 
