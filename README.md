@@ -58,11 +58,13 @@ at `d01087a` (upstream HEAD checked on 2026-10-27):
   not inferred. Captions remain, but encryption URLs, keys and thumbnails are removed
   from dispatched text and raw stanzas are withheld. See
   [Incoming Media](docs/encrypted-media.md#incoming-media) for formats, security and retention limits.
-- **Message status:** XEP-0184 receipts acknowledge requested, validated direct messages
-  before dispatch. XEP-0333 displayed markers acknowledge markable direct messages when
-  processing starts, replacing the eyes reaction without a fallback. Completion reactions
-  remain success/failure indicators. The bot does not request or track user read/delivery
-  confirmations; receiving, starting processing and finishing processing are distinct states.
+- **Message status:** Receiving, starting processing and finishing processing are distinct
+  states. The bot does not request or track user read/delivery confirmations.
+  - [Delivery receipts (XEP-0184)](#delivery-receipts-xep-0184) acknowledge requested,
+    validated direct messages before dispatch.
+  - [Displayed markers (XEP-0333)](#displayed-markers-xep-0333) acknowledge markable direct
+    messages when processing starts, replacing the eyes reaction without a fallback.
+  - [Completion reactions (XEP-0444)](#message-reactions-xep-0444) indicate success or failure.
 - **[Display name](#display-name-xep-0172):** XEP-0172 names support config, environment and a Hermes-home file fallback.
   Available and subscribe presence advertise the name; authorized subscriptions refresh presence.
 
