@@ -221,7 +221,58 @@ MUC text is plaintext at the OMEMO layer (still transported over TLS), even when
 OMEMO is enabled. Encrypted media is unsupported in MUCs and fails before upload
 with the default media setting. See [Encrypted Media](#encrypted-media) for the
 explicit plain-upload opt-out and [OMEMO Security Policy](#omemo-security-policy)
-for device trust requirements.
+for encryption rules. Before your first successful DM, follow
+[First Trusted Device](#first-trusted-device); device trust is required by default.
+
+## First Trusted Device
+
+Trust applies to a contact's recorded OMEMO device identity, not their whole
+account. Repeat verification for other devices. The commands below assume the
+default Hermes home and gateway lifecycle; use the active profile's actual store,
+Python environment and service/container controls if different. Run the CLI from
+this plugin's checkout, as the store owner, with the OMEMO dependencies installed.
+
+1. Add your client's bare JID to the active profile's `.env`, for example
+   `XMPP_ALLOWED_USERS=alice@example.org`. Keep OMEMO enabled and BTBV disabled.
+2. Start or restart the gateway with `hermes gateway restart`. Enable OMEMO in
+   your client's chat with the bot and send a non-sensitive test message. The
+   adapter needs an authorized sender and usable published device keys to discover
+   the identity. The message is discarded until the device is trusted; no reply
+   is expected yet.
+3. Stop the gateway with `hermes gateway stop` and stop **all other writers** of
+   this store, including other processes, containers and standalone senders. List
+   the discovered identities:
+
+```bash
+python -m omemo_trust --store ~/.hermes/xmpp_omemo.json list --jid alice@example.org
+```
+
+4. Identify the sending device and compare its listed fingerprint with the
+   device's own fingerprint shown in your client. Verify all 64 hexadecimal
+   characters independently: inspect your own client directly, or use an
+   authenticated channel for someone else's device. Do not grant trust just
+   because a fingerprint appears in the list or arrives from the unverified device.
+5. Keep every writer stopped. Replace the example device ID and fingerprint
+   placeholder with the independently verified values, then grant trust:
+
+```bash
+python -m omemo_trust --store ~/.hermes/xmpp_omemo.json trust --offline --jid alice@example.org --device-id 1001 --fingerprint 'INDEPENDENTLY VERIFIED 64 HEX CHARACTERS'
+```
+
+6. Only after the command succeeds, start the gateway with `hermes gateway start`.
+   Resend the test message and verify encrypted messages in both directions.
+   The initial discarded message is not replayed automatically. Verify the bot's
+   fingerprint in your client as well; do not bypass the client's trust checks.
+
+If no identity is listed, do not enable blind trust or fabricate a store entry.
+Check the allow-list, actual store/profile path, OMEMO initialization, client
+device publication and bundle availability. A failed first message does not
+guarantee identity discovery. `--offline` only acknowledges that writers are
+stopped; it does not stop them or acquire a lock.
+
+See [Trust CLI](#trust-cli) for store selection, backups and revocation, and the
+[new-device trust runbook](docs/omemo-new-device-trust-runbook.md) for detailed
+discovery troubleshooting and container maintenance.
 
 ## Multiple Hermes profiles
 
