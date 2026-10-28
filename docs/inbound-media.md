@@ -5,6 +5,12 @@ absolute local `media_urls`, parallel content-derived `media_types`, and empty
 plugin metadata. Encryption URLs and thumbnails are removed from event and reply
 text. Raw stanzas are not forwarded. Failed downloads produce generic notices,
 not URLs, keys, or exception details.
+All successfully fetched, decrypted XMPP inbound audio attachments (`audio/*`)
+are emitted as `MessageType.VOICE` for Hermes automatic transcription, including
+music. This is a policy, not an inferred distinction between voice notes and
+other audio: no heuristics, synthetic voice markers, or configuration switch are
+used. Content-derived MIME types and local files remain unchanged. Images,
+videos, and unknown documents retain their existing event types.
 Redaction consumes complete non-whitespace `aesgcm:` tokens, case-insensitively,
 including quotes and angle brackets inside malformed or unsupported links.
 

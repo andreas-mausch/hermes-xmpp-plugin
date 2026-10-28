@@ -58,7 +58,7 @@ class _FakeMessageEvent:
         self.metadata = metadata or {}
 
 gw_base.MessageEvent = _FakeMessageEvent
-gw_base.MessageType = type("MessageType", (), {"TEXT": "text", "PHOTO": "photo", "AUDIO": "audio",
+gw_base.MessageType = type("MessageType", (), {"TEXT": "text", "PHOTO": "photo", "AUDIO": "audio", "VOICE": "voice",
     "VIDEO": "video", "DOCUMENT": "document", "IMAGE": "image", "COMMAND": "command"})
 
 class _FakeProcessingOutcome:
@@ -383,8 +383,18 @@ def clear_captured():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mime,message_type", [
+    ("image/png", "photo"),
+    ("audio/ogg", "voice"),
+    ("audio/mpeg", "voice"),
+    ("audio/wav", "voice"),
+    ("audio/flac", "voice"),
+    ("audio/mp4", "voice"),
+    ("application/octet-stream", "document"),
+    ("video/mp4", "video"),
+])
 @pytest.mark.parametrize("case", ["success", "failed", "untrusted", "plaintext", "muc", "muc_private", "prose", "caption", "caption_without_uri_line"])
-async def test_inbound_media_trust_and_event_contract(adapter_instance, monkeypatch, tmp_path, caplog, case):
+async def test_inbound_media_trust_and_event_contract(adapter_instance, monkeypatch, tmp_path, caplog, case, mime, message_type):
     from types import SimpleNamespace
     from slixmpp.stanza import Message
     from slixmpp.xmlstream import ET
@@ -421,7 +431,7 @@ async def test_inbound_media_trust_and_event_contract(adapter_instance, monkeypa
     plugin.get_session_manager = AsyncMock(return_value=SimpleNamespace(set_trust=AsyncMock()))
     a.client.plugins["xep_0384"] = plugin
     local = str(tmp_path / "image.png")
-    a._inbound_media.fetch = AsyncMock(return_value=(local, "image/png"))
+    a._inbound_media.fetch = AsyncMock(return_value=(local, mime))
     if case == "failed":
         a._inbound_media.fetch.side_effect = MediaError("Attachment unavailable")
     await a._on_message(wire)
@@ -438,8 +448,8 @@ async def test_inbound_media_trust_and_event_contract(adapter_instance, monkeypa
     assert "ab" * 44 not in caplog.text
     assert "secret-key" not in event.text and "secret-key" not in caplog.text
     if case in ("success", "caption"):
-        assert event.media_urls == [local] and event.media_types == ["image/png"]
-        assert event.message_type == "photo"
+        assert event.media_urls == [local] and event.media_types == [mime]
+        assert event.message_type == message_type
         assert event.text == ("My [encrypted attachment] caption\n"
             "Unselected [encrypted attachment]\nProse [encrypted attachment]\n"
             "Malformed [encrypted attachment]\nEnd caption" if case == "caption" else "")

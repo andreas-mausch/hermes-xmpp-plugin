@@ -1302,7 +1302,7 @@ class XmppAdapter(BasePlatformAdapter):
             event = MessageEvent(
                 text=body,
                 message_type=(MessageType.PHOTO if media_types and media_types[0].startswith("image/")
-                              else MessageType.AUDIO if media_types and media_types[0].startswith("audio/")
+                              else MessageType.VOICE if media_types and media_types[0].startswith("audio/")
                               else MessageType.VIDEO if media_types and media_types[0].startswith("video/")
                               else MessageType.DOCUMENT if media_types else MessageType.TEXT),
                 source=source,
