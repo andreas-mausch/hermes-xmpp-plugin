@@ -37,9 +37,11 @@ at `d01087a` (upstream HEAD checked on 2026-10-27):
 
 - **Message security:** With OMEMO enabled, plaintext DM input is rejected by default,
   with an inbound-only debugging override. Outgoing text, edits and clarify prompts fail closed.
-- **Device trust:** Blind trust is off by default; incoming OMEMO DMs require trusted identities.
-- **Trust CLI:** An argparse CLI lists devices and grants or revokes trust offline. Grants
-  require a fingerprint independently verified by the operator; XEdDSA converts the stored key
+- **[Device trust](#device-trust):** Blind trust is off by default; incoming OMEMO DMs
+  require trusted identities.
+- **[Trust CLI](#trust-cli):** An argparse CLI lists devices and grants or revokes trust
+  offline. Grants require a fingerprint independently verified by the operator;
+  XEdDSA converts the stored key
   for comparison. Validated store updates use private backups and atomic replacement;
   listings are aligned and device IDs sorted numerically.
 - **Clarifications and forms:** OMEMO prompts use encrypted numbered text. Form submissions
@@ -421,12 +423,20 @@ Sibling forms on encrypted direct messages remain ignored, because legacy
 OMEMO does not authenticate them. When OMEMO is disabled, plaintext input
 continues to work regardless of this setting. MUC behavior is unchanged.
 
+MUC text behavior is unchanged. Legacy OMEMO protects bodies, not all stanza
+metadata: corrections, reactions, typing, retractions and sibling extensions
+are not covered by a blanket authenticity guarantee. Legacy data forms are
+never acted on beside an encrypted direct-message body, even with the inbound
+plaintext override enabled.
+
+## Device Trust
+
 New devices are not blindly trusted by default. `XMPP_OMEMO_BTBV=true` opts
 into blind trust. Explicitly `TRUSTED` decisions remain effective. The
 dependency treats `BLINDLY_TRUSTED` as undecided when BTBV is off; outbound
 manual-trust handling can mark such devices `DISTRUSTED`. With all store
-writers stopped, use the CLI below to set the existing identity's trust to
-`TRUSTED` after verifying the fingerprint out of band, then restart. `BLINDLY_TRUSTED`
+writers stopped, use the [Trust CLI](#trust-cli) to set the existing identity's
+trust to `TRUSTED` after verifying the fingerprint out of band, then restart. `BLINDLY_TRUSTED`
 is accepted only with BTBV enabled, and is not verified trust. Incoming direct
 messages require effective device trust, not just successful decryption.
 
@@ -437,6 +447,8 @@ The dependency records real bundle identities before decryption. Discovery
 requires authorization, initialized OMEMO, a published/downloadable bundle and
 usable key material. A decryption failure may leave a recorded identity without
 a trust entry, or no identity at all. No identity is fabricated.
+
+## Trust CLI
 
 For offline trust maintenance, run the argparse CLI from this repository using
 the adapter's Python environment with the optional OMEMO dependencies installed:
@@ -462,12 +474,6 @@ Hermes home. It does not load adapter configuration or `.env`.
 
 For operator procedures, see the [fingerprint and trust guide](docs/omemo-fingerprints-and-trust-guide.md)
 and [new-device trust runbook](docs/omemo-new-device-trust-runbook.md).
-
-MUC text behavior is unchanged. Legacy OMEMO protects bodies, not all stanza
-metadata: corrections, reactions, typing, retractions and sibling extensions
-are not covered by a blanket authenticity guarantee. Legacy data forms are
-never acted on beside an encrypted direct-message body, even with the inbound
-plaintext override enabled.
 
 ## Encrypted Media
 
