@@ -109,6 +109,11 @@ XMPP_ALLOWED_USERS=sam@example.org
 # XMPP_OMEMO_MEDIA=true  # follows OMEMO enabled unless explicitly set
 # XMPP_OMEMO_STORAGE_PATH=/path/to/active-profile/xmpp_omemo.json
 # Storage defaults to xmpp_omemo.json in the resolved Hermes home.
+
+# Inbound encrypted attachment cache defaults:
+# XMPP_MEDIA_TTL_SECS=86400      # 24 hours; plugin cache only, not Hermes-retained copies
+# XMPP_MEDIA_MAX_BYTES=26214400  # 25 MiB maximum encrypted attachment size
+# XMPP_MEDIA_CACHE_BYTES=268435456  # 256 MiB cache quota, including download reservations
 ```
 
 JID/password resolution uses Hermes' active-profile secret scope when available.
@@ -116,6 +121,9 @@ Credential preflight can also read that home's `.env` before dotenv loading;
 under multiplexing, missing scoped credentials do not fall back to the launch
 profile's process environment. This does not make every tuning option
 profile-isolated: several options still read process environment directly.
+
+See [Inbound Encrypted Attachments](docs/inbound-media.md) for download security,
+automatic cleanup and the retention boundary of the inbound media cache.
 
 `XMPP_ALLOWED_USERS` uses bare JIDs. MUC access is gated by room membership: if
 the bot joins a room listed in `XMPP_MUC_ROOMS`, messages in that room are accepted.
