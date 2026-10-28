@@ -21,7 +21,7 @@ to land. It supports:
 - XEP-0447 stateless file sharing for voice messages
 - OMEMO end-to-end encryption (enabled by default, needs optional dependencies)
 - Secure inbound XEP-0454 decryption to private local files, with a 24-hour
-  plugin cache lifetime; see [formats, security and retention limits](docs/inbound-media.md)
+  plugin cache lifetime; see [formats, security and retention limits](docs/encrypted-media.md)
 - cron and `send_message` delivery through a standalone sender hook
 - Hermes platform plugin registration via `ctx.register_platform(...)`
 
@@ -48,16 +48,16 @@ at `d01087a` (upstream HEAD checked on 2026-10-27):
   listings are aligned and device IDs sorted numerically.
 - **Clarifications and forms:** OMEMO prompts use encrypted numbered text. Form submissions
   require authorization; encrypted DMs ignore unauthenticated sibling forms.
-- **Outgoing media:** Files, images, video and voice support AES-256-GCM sealing and encrypted XEP-0454
+- **[Outgoing media](docs/encrypted-media.md#outgoing-media):** Files, images, video and voice support AES-256-GCM sealing and encrypted XEP-0454
   links. Captions are separately encrypted; links stay intact. Sealing is global, unsupported
   targets including MUCs fail before upload, and sealed uploads pass only the file basename.
-- **Incoming media:** At the upstream baseline, incoming file URLs remain `TEXT`, with no
+- **[Incoming media](docs/encrypted-media.md#incoming-media):** At the upstream baseline, incoming file URLs remain `TEXT`, with no
   attachment download. This fork decrypts supported XEP-0454 attachments from authorized,
   trusted OMEMO DMs into local media: `PHOTO`, `VOICE`, `VIDEO` or `DOCUMENT`.
   All audio, including music, uses `VOICE` for automatic transcription; voice notes are
   not inferred. Captions remain, but encryption URLs, keys and thumbnails are removed
   from dispatched text and raw stanzas are withheld. See
-  [Inbound Encrypted Attachments](docs/inbound-media.md) for formats, security and retention limits.
+  [Incoming Media](docs/encrypted-media.md#incoming-media) for formats, security and retention limits.
 - **Message status:** XEP-0184 receipts acknowledge requested, validated direct messages
   before dispatch. XEP-0333 displayed markers acknowledge markable direct messages when
   processing starts, replacing the eyes reaction without a fallback. Completion reactions
@@ -135,7 +135,7 @@ under multiplexing, missing scoped credentials do not fall back to the launch
 profile's process environment. This does not make every tuning option
 profile-isolated: several options still read process environment directly.
 
-See [Inbound Encrypted Attachments](docs/inbound-media.md) for download security,
+See [Incoming Media](docs/encrypted-media.md#incoming-media) for download security,
 automatic cleanup and the retention boundary of the inbound media cache.
 
 `XMPP_ALLOWED_USERS` uses bare JIDs. MUC access is gated by room membership: if
@@ -150,7 +150,7 @@ Risky opt-outs, not part of the minimal setup:
 - `XMPP_OMEMO_MEDIA=false` disables upload sealing, including for MUC media; DM links still use OMEMO when enabled.
 
 See [OMEMO Security Policy](docs/omemo-fingerprints-and-trust-guide.md#omemo-security-policy),
-[Encrypted Media](#encrypted-media)
+[Encrypted Media](docs/encrypted-media.md#outgoing-media)
 and the [new-device trust runbook](docs/omemo-new-device-trust-runbook.md)
 for the security implications and trust setup.
 
@@ -215,7 +215,7 @@ falling back to plaintext.
 
 MUC text is plaintext at the OMEMO layer (still transported over TLS), even when
 OMEMO is enabled. Encrypted media is unsupported in MUCs and fails before upload
-with the default media setting. See [Encrypted Media](#encrypted-media) for the
+with the default media setting. See [Encrypted Media](docs/encrypted-media.md#outgoing-media) for the
 explicit plain-upload opt-out and [OMEMO Security Policy](docs/omemo-fingerprints-and-trust-guide.md#omemo-security-policy)
 for encryption rules. Before your first successful DM, follow
 [First Trusted Device](#first-trusted-device); device trust is required by default.
@@ -448,27 +448,6 @@ For testing against a real Hermes checkout, set `PYTHONPATH`:
 ```bash
 PYTHONPATH=/path/to/hermes-agent python -m pytest -q
 ```
-
-## Encrypted Media
-
-`omemo.media` (nested YAML), `omemo_media` (flat YAML/extra), or
-`XMPP_OMEMO_MEDIA` controls XEP-0454 sealed uploads. It defaults to the OMEMO
-enabled setting, so deliberately plaintext installations retain plain uploads.
-This is a global option with no per-destination override. Setting it true
-requires usable 1:1 OMEMO; MUC media, disabled OMEMO and missing plugins fail
-before upload. Setting it false permits plain MUC media but disables upload
-sealing globally, including for DMs; DM links still use OMEMO when enabled.
-
-Files, images, video and voice are AES-256-GCM sealed before HTTP upload.
-Only ciphertext and its authentication tag reach the upload service. The
-`aesgcm://` URI carries hex-encoded IV followed by key and is sent intact in
-one encrypted body. Captions are separate encrypted messages; failures stop
-delivery. Encryption failures never downgrade to plaintext. When sealing is
-disabled but OMEMO remains enabled, direct-chat links still use OMEMO.
-
-Sealing buffers the file in memory. Upload services still see file names,
-sizes and request metadata. A failure after upload may leave orphan ciphertext;
-delivery is not transactional and a caption can arrive before a failed upload.
 
 ## Display Name
 

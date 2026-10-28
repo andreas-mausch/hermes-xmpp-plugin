@@ -1,4 +1,6 @@
-# Inbound Encrypted Attachments
+# Encrypted Media
+
+## Incoming Media
 
 The plugin decrypts supported attachments before Hermes sees them. Events contain
 absolute local `media_urls`, parallel content-derived `media_types`, and empty
@@ -14,7 +16,7 @@ videos, and unknown documents retain their existing event types.
 Redaction consumes complete non-whitespace `aesgcm:` tokens, case-insensitively,
 including quotes and angle brackets inside malformed or unsupported links.
 
-## Supported Input
+### Supported Input
 
 - XEP-0454: one `aesgcm://` body line, optionally followed by an image data URI.
   The fragment is exactly 88 hexadecimal characters: 12-byte IV, then 32-byte
@@ -39,7 +41,7 @@ Other encodings, XEP-0448 encrypted SFS sources, Jingle/IBB and plaintext upload
 URLs are not implemented. Unsupported `aesgcm:` tokens are still sanitized.
 This is not a promise to decrypt every XMPP encryption/file-transfer protocol.
 
-## Network And Storage
+### Network And Storage
 
 HTTPS only, verified TLS, port 443 only, no userinfo, no environment proxies,
 no redirects, no HTTP content decompression. Every DNS answer must be public;
@@ -83,7 +85,7 @@ The scan permits at most 1024 boxes and four hierarchy levels, reads at most
 them. Normal, extended and zero-to-container-end box sizes are bounded by their
 container and file. Filenames and SFS MIME metadata never override this analysis.
 
-## Retention Boundary
+### Retention Boundary
 
 Startup removes unfinished and expired entries. A plugin-owned task sweeps
 independently of downloads every five minutes (or TTL if shorter). Default TTL
@@ -101,7 +103,7 @@ extracted text, transcripts or agent copies. Hermes' rehoming code does not ensu
 destination directories are 0700. Configure Hermes profile/cache/state retention
 separately. A claim that all Hermes media disappears after 24 hours would be false.
 
-## Configuration
+### Configuration
 
 Optional scoped environment variables, exposed in `plugin.yaml`:
 
@@ -112,7 +114,7 @@ Optional scoped environment variables, exposed in `plugin.yaml`:
 Values must be positive and finite; invalid values fail adapter construction.
 No plaintext/MUC fetch override is provided.
 
-## Source Evidence
+### Source Evidence
 
 - [XEP-0454 sections 3-5 and 7](https://xmpp.org/extensions/xep-0454.html):
   IV/key ordering and size, trailing tag, strict layout, thumbnail and secrecy.
@@ -127,3 +129,24 @@ No plaintext/MUC fetch override is provided.
 Tests use real AES-GCM and mocked streaming HTTP responses. They exercise the
 real aiohttp resolver/connector resolution path, but are not live-server TLS or
 Conversations/Gajim interoperability tests. The review bundle was not merged.
+
+## Outgoing Media
+
+`omemo.media` (nested YAML), `omemo_media` (flat YAML/extra), or
+`XMPP_OMEMO_MEDIA` controls XEP-0454 sealed uploads. It defaults to the OMEMO
+enabled setting, so deliberately plaintext installations retain plain uploads.
+This is a global option with no per-destination override. Setting it true
+requires usable 1:1 OMEMO; MUC media, disabled OMEMO and missing plugins fail
+before upload. Setting it false permits plain MUC media but disables upload
+sealing globally, including for DMs; DM links still use OMEMO when enabled.
+
+Files, images, video and voice are AES-256-GCM sealed before HTTP upload.
+Only ciphertext and its authentication tag reach the upload service. The
+`aesgcm://` URI carries hex-encoded IV followed by key and is sent intact in
+one encrypted body. Captions are separate encrypted messages; failures stop
+delivery. Encryption failures never downgrade to plaintext. When sealing is
+disabled but OMEMO remains enabled, direct-chat links still use OMEMO.
+
+Sealing buffers the file in memory. Upload services still see file names,
+sizes and request metadata. A failure after upload may leave orphan ciphertext;
+delivery is not transactional and a caption can arrive before a failed upload.
