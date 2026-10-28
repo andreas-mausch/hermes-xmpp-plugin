@@ -38,6 +38,10 @@ at `d01087a` (upstream HEAD checked on 2026-10-27):
 - **Message security:** With OMEMO enabled, plaintext DM input is rejected by default,
   with an inbound-only debugging override. Outgoing text, edits and clarify prompts fail closed.
 - **Device trust:** Blind trust is off by default; incoming OMEMO DMs require trusted identities.
+- **Trust CLI:** An argparse CLI lists devices and grants or revokes trust offline. Grants
+  require a fingerprint independently verified by the operator; XEdDSA converts the stored key
+  for comparison. Validated store updates use private backups and atomic replacement;
+  listings are aligned and device IDs sorted numerically.
 - **Clarifications and forms:** OMEMO prompts use encrypted numbered text. Form submissions
   require authorization; encrypted DMs ignore unauthenticated sibling forms.
 - **Outgoing media:** Files, images, video and voice support AES-256-GCM sealing and encrypted XEP-0454
@@ -62,10 +66,6 @@ at `d01087a` (upstream HEAD checked on 2026-10-27):
   processing starts, replacing the eyes reaction without a fallback. Completion reactions
   remain success/failure indicators. The bot does not request or track user read/delivery
   confirmations; receiving, starting processing and finishing processing are distinct states.
-- **Trust CLI:** An argparse CLI lists devices and grants or revokes trust offline. Grants
-  require a fingerprint independently verified by the operator; XEdDSA converts the stored key
-  for comparison. Validated store updates use private backups and atomic replacement;
-  listings are aligned and device IDs sorted numerically.
 - **Display name:** XEP-0172 names support config, environment and a Hermes-home file fallback.
   Available and subscribe presence advertise the name; authorized subscriptions refresh presence.
 
