@@ -459,6 +459,30 @@ the adapter uses the UTC reception time at entry to the XMPP message handler,
 before decryption or attachment downloads. That fallback is a local reception
 time, not the sender's original send time. Delayed groupchat history remains ignored.
 
+Whether the agent prompt actually shows these stamps is a Hermes-side switch,
+outside this repository: `gateway.message_timestamps.enabled: true` in the
+Hermes config (default off). When enabled, Hermes renders each user message
+once as a `[Wed 2026-10-28 20:40:53 CET]`-style prefix in model context; the
+displayed zone follows Hermes' `timezone` setting, otherwise server-local.
+Persisted message content stays clean. Recognized leading timestamp prefixes
+are normalized to a single prefix, preserving their parsed time; timestamps
+elsewhere in the text remain unchanged.
+
+Set an explicit IANA timezone in Hermes' `config.yaml` so timestamp display and
+time-based scheduling do not depend on the server's local timezone. For example:
+
+```yaml
+timezone: Europe/Berlin
+
+gateway:
+  message_timestamps:
+    enabled: true
+```
+
+`timezone` is a top-level setting and accounts for daylight saving time.
+If `gateway` already exists, merge `message_timestamps` into that section.
+The plugin continues to pass UTC timestamps; Hermes handles their display.
+
 ## Development
 
 The test suite runs standalone — no Hermes checkout required. It uses mocks for the
