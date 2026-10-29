@@ -207,6 +207,63 @@ def _make_stanza(**fields):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("namespace,tag,stamp,expected", [
+    ("urn:xmpp:delay", "delay", "2026-10-28T12:30:00Z", "2026-10-28T12:30:00+00:00"),
+    ("urn:xmpp:delay", "delay", "2026-10-28T14:30:00+02:00", "2026-10-28T12:30:00+00:00"),
+    ("jabber:x:delay", "x", "20261028T12:30:00", "2026-10-28T12:30:00+00:00"),
+    ("urn:xmpp:delay", "delay", "invalid", None),
+    ("urn:xmpp:delay", "delay", "2026-10-28T12:30:00", None),
+    ("urn:xmpp:delay", "delay", "", None),
+])
+async def test_inbound_delay_timestamp(adapter_instance, namespace, tag, stamp, expected):
+    from datetime import datetime, timezone
+    from xml.etree.ElementTree import Element, SubElement
+
+    a = adapter_instance
+    a.handle_message = AsyncMock()
+    stanza = _make_stanza(type="chat", body="hello")
+    stanza.xml = Element("message")
+    SubElement(stanza.xml, "{" + namespace + "}" + tag, stamp=stamp)
+    before = datetime.now(timezone.utc)
+    await a._on_message(stanza)
+    after = datetime.now(timezone.utc)
+    event = a.handle_message.await_args.args[0]
+    if expected:
+        assert event.timestamp.isoformat() == expected
+    else:
+        assert before <= event.timestamp <= after
+    assert event.timestamp.tzinfo is timezone.utc
+
+
+@pytest.mark.asyncio
+async def test_inbound_timestamp_is_utc_handler_arrival(adapter_instance, monkeypatch):
+    from datetime import datetime, timezone
+
+    received_at = datetime(2026, 10, 29, 12, 30, tzinfo=timezone.utc)
+    clock = MagicMock()
+    clock.now.return_value = received_at
+    monkeypatch.setattr(adapter, "datetime", clock)
+    a = adapter_instance
+    a.handle_message = AsyncMock()
+
+    def read_body():
+        # Time advances before event construction; preserve handler arrival.
+        clock.now.return_value = datetime(2026, 10, 29, 12, 31, tzinfo=timezone.utc)
+        return "hello"
+
+    stanza = _make_stanza(type="chat", body="hello")
+    original_getitem = type(stanza).__getitem__
+    monkeypatch.setattr(type(stanza), "__getitem__",
+                        lambda self, key: read_body() if key == "body" else original_getitem(self, key))
+    await a._on_message(stanza)
+
+    event = a.handle_message.await_args.args[0]
+    assert event.timestamp == received_at
+    assert event.timestamp.tzinfo is timezone.utc
+    clock.now.assert_called_once_with(timezone.utc)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("sender,mtype,owner,accepted", [
     ("alice@example.org/phone", "chat", ("dm", "alice@example.org", "alice@example.org"), True),
     ("bob@example.org/phone", "chat", ("dm", "alice@example.org", "alice@example.org"), False),

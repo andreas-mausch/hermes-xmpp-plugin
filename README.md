@@ -66,6 +66,9 @@ at `d01087a` (upstream HEAD checked on 2026-10-27):
   - [Completion reactions (XEP-0444)](#message-reactions-xep-0444) indicate success or failure.
 - **[Display name](#display-name-xep-0172):** XEP-0172 names support config, environment and a Hermes-home file fallback.
   Available and subscribe presence advertise the name; authorized subscriptions refresh presence.
+- **[Message timestamps](#message-timestamps):** Hermes receives valid XMPP delay stamps
+  normalized to UTC, with the handler's reception time as fallback, before decryption
+  or attachment downloads.
 
 ## Credits
 
@@ -447,6 +450,14 @@ unavailable, probe and subscription-approval stanzas are not stamped.
 Presence is refreshed after authorized subscription requests or approvals.
 Clients may require mutual presence subscriptions to display the nickname;
 this does not change the account JID, MUC nickname or vCard.
+
+### Message Timestamps
+
+Inbound messages pass a valid XMPP delay stamp (XEP-0203 or legacy XEP-0091)
+to Hermes' `MessageEvent.timestamp`, normalized to UTC. Without a valid stamp,
+the adapter uses the UTC reception time at entry to the XMPP message handler,
+before decryption or attachment downloads. That fallback is a local reception
+time, not the sender's original send time. Delayed groupchat history remains ignored.
 
 ## Development
 

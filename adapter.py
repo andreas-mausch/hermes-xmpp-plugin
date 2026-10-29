@@ -62,6 +62,7 @@ import os
 import secrets
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -1087,6 +1088,7 @@ class XmppAdapter(BasePlatformAdapter):
     # -----------------------------------------------------------------
 
     async def _on_message(self, stanza: Any) -> None:
+        received_at = datetime.now(timezone.utc)
         try:
             stanza_type = stanza["type"]
             if stanza_type in ("error", "headline"):
@@ -1128,6 +1130,24 @@ class XmppAdapter(BasePlatformAdapter):
             # Decryption can replace or mutate the stanza; retain wire receipt metadata.
             wire_id = stanza.get("id")
             wire_xml = getattr(stanza, "xml", None)
+            message_timestamp = received_at
+            if wire_xml is not None:
+                delay = wire_xml.find("{urn:xmpp:delay}delay")
+                legacy_delay = False
+                if delay is None:
+                    delay = wire_xml.find("{jabber:x:delay}x")
+                    legacy_delay = True
+                if delay is not None:
+                    try:
+                        stamp = delay.get("stamp", "")
+                        if legacy_delay:
+                            parsed = datetime.strptime(stamp, "%Y%m%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+                        else:
+                            parsed = datetime.fromisoformat(stamp)
+                        if parsed.tzinfo is not None:
+                            message_timestamp = parsed.astimezone(timezone.utc)
+                    except (ValueError, TypeError):
+                        pass
             wire_markable = (
                 wire_xml is not None
                 and wire_xml.find("{urn:xmpp:chat-markers:0}markable") is not None
@@ -1313,6 +1333,7 @@ class XmppAdapter(BasePlatformAdapter):
                 reply_to_text=sanitize(reply_to_text) if reply_to_text else None,
             )
             event.media_urls = media_urls
+            event.timestamp = message_timestamp
             event.media_types = media_types
             # Native admission rejects plugin metadata. Keep wire-only hook state local.
             event._xmpp_markable = wire_markable
