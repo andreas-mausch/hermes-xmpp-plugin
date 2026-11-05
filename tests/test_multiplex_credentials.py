@@ -134,7 +134,7 @@ def _reset(monkeypatch, *, multiplex=False, scope=None):
     _STATE["multiplex"] = multiplex
 
 
-_ENV_NAMES = ("XMPP_JID", "XMPP_PASSWORD", "XMPP_ALLOWED_USERS", "HERMES_HOME")
+_ENV_NAMES = ("XMPP_JID", "XMPP_PASSWORD", "XMPP_ALLOWED_USERS", "XMPP_DISPLAY_NAME", "HERMES_HOME")
 
 
 @pytest.fixture(autouse=True)
@@ -234,6 +234,21 @@ def test_adapter_fails_closed_under_multiplex(monkeypatch):
     assert a.jid == ""
     assert a._password == ""
     assert adapter.validate_config(a.config) is False
+
+
+@pytest.mark.parametrize("scoped_name", ["Profile Name", "", "  ", None])
+def test_display_name_is_profile_scoped(monkeypatch, scoped_name):
+    scope = {"XMPP_JID": "profile@example", "XMPP_PASSWORD": "pw"}
+    if scoped_name is not None:
+        scope["XMPP_DISPLAY_NAME"] = scoped_name
+    _reset(monkeypatch, multiplex=True, scope=scope)
+    monkeypatch.setenv("XMPP_DISPLAY_NAME", "Launch Name")
+    assert adapter.XmppAdapter(_make_cfg())._display_name == (scoped_name or "").strip()
+    assert adapter._env_enablement().get("display_name") == ((scoped_name or "").strip() or None)
+    extra = adapter._apply_yaml_config({}, {"display_name": "YAML Name"})
+    assert extra["display_name"] == "YAML Name"
+    assert os.environ["XMPP_DISPLAY_NAME"] == "Launch Name"
+    assert adapter.XmppAdapter(_make_cfg(**extra))._display_name == "YAML Name"
 
 
 # --- yaml export guard -------------------------------------------------------

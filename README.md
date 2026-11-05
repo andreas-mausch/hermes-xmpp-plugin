@@ -248,6 +248,19 @@ The adapter registers ad-hoc commands on the bot's JID. Users can discover them
 with their client's command list (e.g., `/cmd` in Conversations). Currently a
 basic command list is exposed; future releases may add Hermes-specific commands.
 
+### Display Name (XEP-0172)
+
+Set `display_name` in XMPP YAML/extra or `XMPP_DISPLAY_NAME` to advertise a
+XEP-0172 nickname in available and subscribe presence. Extra takes precedence
+over the profile-scoped environment, including an explicitly empty value.
+An empty or whitespace-only name means no nickname is advertised. Existing
+nickname elements are kept; unavailable, probe and subscription-approval
+stanzas are not stamped.
+
+Presence is refreshed after authorized subscription requests or approvals.
+Clients may require mutual presence subscriptions to display the nickname;
+this does not change the account JID, MUC nickname or vCard.
+
 ## Development
 
 The test suite runs standalone — no Hermes checkout required. It uses mocks for the
