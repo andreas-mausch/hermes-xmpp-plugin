@@ -50,9 +50,9 @@ optional_env:
     description: Default nickname in MUC rooms
     prompt: MUC nickname
     password: false
-  - name: XMPP_DISPLAY_NAME
-    description: XEP-0172 display name published through PEP and in subscription requests
-    prompt: Display name
+  - name: XMPP_USER_NICKNAME
+    description: XEP-0172 user nickname published through PEP and in subscription requests
+    prompt: User nickname
     password: false
   - name: XMPP_HOME_CHANNEL
     description: Default JID or room for cron / send_message delivery

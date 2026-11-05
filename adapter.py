@@ -552,11 +552,11 @@ class XmppAdapter(BasePlatformAdapter):
             str(extra.get("muc_rooms") or os.getenv("XMPP_MUC_ROOMS", "")), self.muc_nick
         )
 
-        self._display_name: Optional[str] = extra.get(
-            "display_name", _scoped_getenv("XMPP_DISPLAY_NAME", None)
+        self._user_nickname: Optional[str] = extra.get(
+            "user_nickname", _scoped_getenv("XMPP_USER_NICKNAME", None)
         )
-        if self._display_name is not None:
-            self._display_name = self._display_name.strip()
+        if self._user_nickname is not None:
+            self._user_nickname = self._user_nickname.strip()
 
         # Allow-list
         allow_all_raw = str(extra.get("allow_all_users", _scoped_getenv("XMPP_ALLOW_ALL_USERS", "")))
@@ -762,14 +762,14 @@ class XmppAdapter(BasePlatformAdapter):
         client.roster.auto_authorize = False
         client.roster.auto_subscribe = False
         client.add_event_handler("presence_subscribe", self._on_subscribe)
-        if self._display_name:
+        if self._user_nickname:
             def _presence_nick_filter(stanza):
                 if stanza.name == "presence" and stanza.get("type") == "subscribe":
                     from slixmpp.xmlstream import ET
 
                     tag = "{http://jabber.org/protocol/nick}nick"
                     if stanza.xml.find(tag) is None:
-                        ET.SubElement(stanza.xml, tag).text = self._display_name
+                        ET.SubElement(stanza.xml, tag).text = self._user_nickname
                 return stanza
 
             client.add_filter("out_sync", _presence_nick_filter)
@@ -1172,14 +1172,14 @@ class XmppAdapter(BasePlatformAdapter):
             await self._setup_adhoc_commands()
         except Exception:
             logger.debug("xmpp: ad-hoc command setup failed", exc_info=True)
-        if self._display_name is not None:
+        if self._user_nickname is not None:
             try:
-                if self._display_name:
-                    await self.client["xep_0172"].publish_nick(self._display_name)
+                if self._user_nickname:
+                    await self.client["xep_0172"].publish_nick(self._user_nickname)
                 else:
                     await self.client["xep_0172"].stop()
             except Exception:
-                logger.warning("xmpp: display name publication failed", exc_info=True)
+                logger.warning("xmpp: user nickname publication failed", exc_info=True)
 
     async def _on_subscribe(self, presence: Any) -> None:
         """Approve an inbound presence-subscription request from an allowed peer.
@@ -2509,7 +2509,7 @@ def _env_enablement() -> Optional[dict[str, Any]]:
         ("XMPP_CONNECT_TIMEOUT_SECS", "connect_timeout_secs"),
         ("XMPP_MUC_ROOMS", "muc_rooms"),
         ("XMPP_MUC_NICK", "muc_nick"),
-        ("XMPP_DISPLAY_NAME", "display_name"),
+        ("XMPP_USER_NICKNAME", "user_nickname"),
         ("XMPP_ALLOWED_USERS", "allowed_users"),
         ("XMPP_ALLOW_ALL_USERS", "allow_all_users"),
     ):
@@ -2525,7 +2525,7 @@ def _apply_yaml_config(yaml_cfg: dict, xmpp_cfg: dict) -> Optional[dict[str, Any
     for key in (
         "jid", "password", "host", "port", "direct_tls", "connect_timeout_secs",
         "muc_rooms", "muc_nick", "allowed_users", "allow_all_users", "max_message_length",
-        "display_name",
+        "user_nickname",
     ):
         if key in raw and key not in extra:
             extra[key] = raw[key]
@@ -2555,7 +2555,7 @@ def _apply_yaml_config(yaml_cfg: dict, xmpp_cfg: dict) -> Optional[dict[str, Any
         "allowed_users": "XMPP_ALLOWED_USERS",
         "allow_all_users": "XMPP_ALLOW_ALL_USERS",
         "home_channel": "XMPP_HOME_CHANNEL",
-        "display_name": "XMPP_DISPLAY_NAME",
+        "user_nickname": "XMPP_USER_NICKNAME",
     }
     # Boolean flags: set env from yaml/config if the env isn't already set.
     if not os.getenv("XMPP_DISABLE_CLARIFY_FORMS"):
@@ -2568,7 +2568,7 @@ def _apply_yaml_config(yaml_cfg: dict, xmpp_cfg: dict) -> Optional[dict[str, Any
     # tenant's env. Values stay in `extra`, which every read resolves first.
     _multiplex = _multiplex_active()
     for key, env in env_map.items():
-        value = extra.get(key) if key == "display_name" else raw.get(key, extra.get(key))
+        value = extra.get(key) if key == "user_nickname" else raw.get(key, extra.get(key))
         if key == "home_channel" and isinstance(value, dict):
             value = value.get("chat_id")
         if value is None or os.getenv(env):

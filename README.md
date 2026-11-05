@@ -248,9 +248,9 @@ The adapter registers ad-hoc commands on the bot's JID. Users can discover them
 with their client's command list (e.g., `/cmd` in Conversations). Currently a
 basic command list is exposed; future releases may add Hermes-specific commands.
 
-### Display Name (XEP-0172)
+### User Nickname (XEP-0172)
 
-Set `display_name` in XMPP YAML/extra or `XMPP_DISPLAY_NAME` to advertise a
+Set `user_nickname` in XMPP YAML/extra or `XMPP_USER_NICKNAME` to advertise a
 XEP-0172 nickname through PEP and in subscribe presence. Extra takes precedence
 over the profile-scoped environment, including an explicitly empty value.
 Names are trimmed before publication. An explicitly empty or whitespace-only
@@ -258,7 +258,7 @@ YAML/extra value clears the stored PEP nickname. An empty or whitespace-only
 environment value clears it too. A null YAML/extra value leaves the stored name
 unchanged, even when the environment provides a name. An unset environment
 variable without YAML/extra also leaves the stored name unchanged.
-No display-name value is read from a file fallback.
+No user-nickname value is read from a file fallback.
 Existing subscription nickname elements are kept. Normal presence broadcasts,
 MUC presence and subscription approvals are not stamped.
 

@@ -134,7 +134,7 @@ def _reset(monkeypatch, *, multiplex=False, scope=None):
     _STATE["multiplex"] = multiplex
 
 
-_ENV_NAMES = ("XMPP_JID", "XMPP_PASSWORD", "XMPP_ALLOWED_USERS", "XMPP_DISPLAY_NAME", "HERMES_HOME")
+_ENV_NAMES = ("XMPP_JID", "XMPP_PASSWORD", "XMPP_ALLOWED_USERS", "XMPP_USER_NICKNAME", "HERMES_HOME")
 
 
 @pytest.fixture(autouse=True)
@@ -176,12 +176,12 @@ def test_scoped_getenv_none_default_preserves_empty(monkeypatch, source, value):
         _reset(monkeypatch, scope={})
     elif source == "scope":
         _reset(monkeypatch, multiplex=True, scope=(
-            {} if value is None else {"XMPP_DISPLAY_NAME": value}
+            {} if value is None else {"XMPP_USER_NICKNAME": value}
         ))
-        monkeypatch.setenv("XMPP_DISPLAY_NAME", "Launch Name")
+        monkeypatch.setenv("XMPP_USER_NICKNAME", "Launch Name")
     if source != "scope" and value is not None:
-        monkeypatch.setenv("XMPP_DISPLAY_NAME", value)
-    assert adapter._scoped_getenv("XMPP_DISPLAY_NAME", None) == value
+        monkeypatch.setenv("XMPP_USER_NICKNAME", value)
+    assert adapter._scoped_getenv("XMPP_USER_NICKNAME", None) == value
 
 
 def test_scope_wins_over_process_env(monkeypatch):
@@ -254,20 +254,20 @@ def test_adapter_fails_closed_under_multiplex(monkeypatch):
 
 
 @pytest.mark.parametrize("scoped_name", ["Profile Name", "", "  ", None])
-def test_display_name_is_profile_scoped(monkeypatch, scoped_name):
+def test_user_nickname_is_profile_scoped(monkeypatch, scoped_name):
     scope = {"XMPP_JID": "profile@example", "XMPP_PASSWORD": "pw"}
     if scoped_name is not None:
-        scope["XMPP_DISPLAY_NAME"] = scoped_name
+        scope["XMPP_USER_NICKNAME"] = scoped_name
     _reset(monkeypatch, multiplex=True, scope=scope)
-    monkeypatch.setenv("XMPP_DISPLAY_NAME", "Launch Name")
-    assert adapter.XmppAdapter(_make_cfg())._display_name == (
+    monkeypatch.setenv("XMPP_USER_NICKNAME", "Launch Name")
+    assert adapter.XmppAdapter(_make_cfg())._user_nickname == (
         scoped_name.strip() if scoped_name is not None else None
     )
-    assert adapter._env_enablement().get("display_name") == ((scoped_name or "").strip() or None)
-    extra = adapter._apply_yaml_config({}, {"display_name": "YAML Name"})
-    assert extra["display_name"] == "YAML Name"
-    assert os.environ["XMPP_DISPLAY_NAME"] == "Launch Name"
-    assert adapter.XmppAdapter(_make_cfg(**extra))._display_name == "YAML Name"
+    assert adapter._env_enablement().get("user_nickname") == ((scoped_name or "").strip() or None)
+    extra = adapter._apply_yaml_config({}, {"user_nickname": "YAML Name"})
+    assert extra["user_nickname"] == "YAML Name"
+    assert os.environ["XMPP_USER_NICKNAME"] == "Launch Name"
+    assert adapter.XmppAdapter(_make_cfg(**extra))._user_nickname == "YAML Name"
 
 
 # --- yaml export guard -------------------------------------------------------

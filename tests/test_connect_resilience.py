@@ -277,11 +277,11 @@ def _reset_state():
 # -----------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_display_name_presence_filter(monkeypatch):
+async def test_user_nickname_presence_filter(monkeypatch):
     from slixmpp.stanza import Presence, Message
     from slixmpp.xmlstream import ET
 
-    a = adapter.XmppAdapter(_make_cfg(display_name="Hermes"))
+    a = adapter.XmppAdapter(_make_cfg(user_nickname="Hermes"))
     monkeypatch.setattr(adapter, "ClientXMPP", _FakeSlixmppClient)
     assert await a.connect()
     try:
@@ -310,27 +310,27 @@ async def test_display_name_presence_filter(monkeypatch):
         await a.disconnect()
 
 
-def test_display_name_sources(monkeypatch):
-    monkeypatch.delenv("XMPP_DISPLAY_NAME", raising=False)
-    assert adapter.XmppAdapter(_make_cfg())._display_name is None
-    monkeypatch.setenv("XMPP_DISPLAY_NAME", "Env Name")
-    assert adapter.XmppAdapter(_make_cfg())._display_name == "Env Name"
-    assert adapter.XmppAdapter(_make_cfg(display_name="  Extra Name  "))._display_name == "Extra Name"
-    assert adapter.XmppAdapter(_make_cfg(display_name=None))._display_name is None
+def test_user_nickname_sources(monkeypatch):
+    monkeypatch.delenv("XMPP_USER_NICKNAME", raising=False)
+    assert adapter.XmppAdapter(_make_cfg())._user_nickname is None
+    monkeypatch.setenv("XMPP_USER_NICKNAME", "Env Name")
+    assert adapter.XmppAdapter(_make_cfg())._user_nickname == "Env Name"
+    assert adapter.XmppAdapter(_make_cfg(user_nickname="  Extra Name  "))._user_nickname == "Extra Name"
+    assert adapter.XmppAdapter(_make_cfg(user_nickname=None))._user_nickname is None
     for empty in ("", "  "):
-        assert adapter.XmppAdapter(_make_cfg(display_name=empty))._display_name == ""
-    extra = adapter._apply_yaml_config({}, {"display_name": "YAML Name"})
-    assert extra["display_name"] == "YAML Name"
-    extra = adapter._apply_yaml_config({}, {"display_name": None})
-    assert adapter.XmppAdapter(_make_cfg(**extra))._display_name is None
+        assert adapter.XmppAdapter(_make_cfg(user_nickname=empty))._user_nickname == ""
+    extra = adapter._apply_yaml_config({}, {"user_nickname": "YAML Name"})
+    assert extra["user_nickname"] == "YAML Name"
+    extra = adapter._apply_yaml_config({}, {"user_nickname": None})
+    assert adapter.XmppAdapter(_make_cfg(**extra))._user_nickname is None
     for empty in ("", "  "):
-        monkeypatch.setenv("XMPP_DISPLAY_NAME", empty)
-        assert adapter.XmppAdapter(_make_cfg())._display_name == ""
+        monkeypatch.setenv("XMPP_USER_NICKNAME", empty)
+        assert adapter.XmppAdapter(_make_cfg())._user_nickname == ""
 
 
 @pytest.mark.asyncio
-async def test_empty_display_name_does_not_register_filter(monkeypatch):
-    a = adapter.XmppAdapter(_make_cfg(display_name=""))
+async def test_empty_user_nickname_does_not_register_filter(monkeypatch):
+    a = adapter.XmppAdapter(_make_cfg(user_nickname=""))
     monkeypatch.setattr(adapter, "ClientXMPP", _FakeSlixmppClient)
     assert await a.connect()
     try:
@@ -354,15 +354,15 @@ async def test_subscription_is_authorized(allowed, allow_all):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("extra,env,method", [({}, None, None), ({}, "", "stop"),
                                              ({}, "  ", "stop"), ({}, "  Hermes  ", "publish_nick"),
-                                             ({"display_name": "  Hermes  "}, None, "publish_nick"),
-                                             ({"display_name": ""}, "Env Name", "stop"),
-                                             ({"display_name": "  "}, None, "stop"),
-                                             ({"display_name": None}, "Env Name", None)])
+                                             ({"user_nickname": "  Hermes  "}, None, "publish_nick"),
+                                             ({"user_nickname": ""}, "Env Name", "stop"),
+                                             ({"user_nickname": "  "}, None, "stop"),
+                                             ({"user_nickname": None}, "Env Name", None)])
 @pytest.mark.parametrize("fail", [False, True])
-async def test_display_name_publication(monkeypatch, extra, env, method, fail, caplog):
-    monkeypatch.delenv("XMPP_DISPLAY_NAME", raising=False)
+async def test_user_nickname_publication(monkeypatch, extra, env, method, fail, caplog):
+    monkeypatch.delenv("XMPP_USER_NICKNAME", raising=False)
     if env is not None:
-        monkeypatch.setenv("XMPP_DISPLAY_NAME", env)
+        monkeypatch.setenv("XMPP_USER_NICKNAME", env)
     monkeypatch.setattr(adapter, "ClientXMPP", _FakeSlixmppClient)
     a = adapter.XmppAdapter(_make_cfg(**extra))
     assert await a.connect()
@@ -384,17 +384,17 @@ async def test_display_name_publication(monkeypatch, extra, env, method, fail, c
             nick.publish_nick.assert_not_called()
             nick.stop.assert_not_called()
         if fail and method:
-            assert "display name publication failed" in caplog.text
+            assert "user nickname publication failed" in caplog.text
     finally:
         await a.disconnect()
 
 
 @pytest.mark.parametrize("name", ["Extra Name", ""])
-def test_display_name_export_uses_extra(monkeypatch, name):
-    monkeypatch.delenv("XMPP_DISPLAY_NAME", raising=False)
-    extra = adapter._apply_yaml_config({}, {"display_name": "Top Level", "extra": {"display_name": name}})
-    assert extra["display_name"] == name
-    assert adapter.os.environ["XMPP_DISPLAY_NAME"] == name
+def test_user_nickname_export_uses_extra(monkeypatch, name):
+    monkeypatch.delenv("XMPP_USER_NICKNAME", raising=False)
+    extra = adapter._apply_yaml_config({}, {"user_nickname": "Top Level", "extra": {"user_nickname": name}})
+    assert extra["user_nickname"] == name
+    assert adapter.os.environ["XMPP_USER_NICKNAME"] == name
 
 
 @pytest.mark.asyncio
