@@ -51,7 +51,7 @@ optional_env:
     prompt: MUC nickname
     password: false
   - name: XMPP_DISPLAY_NAME
-    description: XEP-0172 display name advertised in available and subscribe presence
+    description: XEP-0172 display name published through PEP and in subscription requests
     prompt: Display name
     password: false
   - name: XMPP_HOME_CHANNEL

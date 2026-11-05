@@ -167,6 +167,23 @@ def _make_cfg(**extra):
 
 # --- _scoped_getenv ----------------------------------------------------------
 
+@pytest.mark.parametrize("source", ["no_scope_module", "process", "single_profile_fallback", "scope"])
+@pytest.mark.parametrize("value", [None, "", "  ", "Profile Name"])
+def test_scoped_getenv_none_default_preserves_empty(monkeypatch, source, value):
+    if source == "no_scope_module":
+        monkeypatch.setitem(sys.modules, "agent.secret_scope", None)
+    elif source == "single_profile_fallback":
+        _reset(monkeypatch, scope={})
+    elif source == "scope":
+        _reset(monkeypatch, multiplex=True, scope=(
+            {} if value is None else {"XMPP_DISPLAY_NAME": value}
+        ))
+        monkeypatch.setenv("XMPP_DISPLAY_NAME", "Launch Name")
+    if source != "scope" and value is not None:
+        monkeypatch.setenv("XMPP_DISPLAY_NAME", value)
+    assert adapter._scoped_getenv("XMPP_DISPLAY_NAME", None) == value
+
+
 def test_scope_wins_over_process_env(monkeypatch):
     _reset(monkeypatch, scope={"XMPP_JID": "secondary@profile.example"})
     monkeypatch.setenv("XMPP_JID", "launch@env.example")
@@ -243,7 +260,9 @@ def test_display_name_is_profile_scoped(monkeypatch, scoped_name):
         scope["XMPP_DISPLAY_NAME"] = scoped_name
     _reset(monkeypatch, multiplex=True, scope=scope)
     monkeypatch.setenv("XMPP_DISPLAY_NAME", "Launch Name")
-    assert adapter.XmppAdapter(_make_cfg())._display_name == (scoped_name or "").strip()
+    assert adapter.XmppAdapter(_make_cfg())._display_name == (
+        scoped_name.strip() if scoped_name is not None else None
+    )
     assert adapter._env_enablement().get("display_name") == ((scoped_name or "").strip() or None)
     extra = adapter._apply_yaml_config({}, {"display_name": "YAML Name"})
     assert extra["display_name"] == "YAML Name"

@@ -251,13 +251,23 @@ basic command list is exposed; future releases may add Hermes-specific commands.
 ### Display Name (XEP-0172)
 
 Set `display_name` in XMPP YAML/extra or `XMPP_DISPLAY_NAME` to advertise a
-XEP-0172 nickname in available and subscribe presence. Extra takes precedence
+XEP-0172 nickname through PEP and in subscribe presence. Extra takes precedence
 over the profile-scoped environment, including an explicitly empty value.
-An empty or whitespace-only name means no nickname is advertised. Existing
-nickname elements are kept; unavailable, probe and subscription-approval
-stanzas are not stamped.
+Names are trimmed before publication. An explicitly empty or whitespace-only
+YAML/extra value clears the stored PEP nickname. An empty or whitespace-only
+environment value clears it too. A null YAML/extra value leaves the stored name
+unchanged, even when the environment provides a name. An unset environment
+variable without YAML/extra also leaves the stored name unchanged.
+No display-name value is read from a file fallback.
+Existing subscription nickname elements are kept. Normal presence broadcasts,
+MUC presence and subscription approvals are not stamped.
 
-Presence is refreshed after authorized subscription requests or approvals.
+The configured name is published once per session, using Slixmpp's XEP-0172 API.
+Publication failures are logged without breaking the connection. PEP support is
+required for updates to existing contacts; no standalone PubSub fallback is provided.
+Clearing publishes an empty nickname item. Some clients, including the current
+Conversations implementation, may retain a cached name until a node deletion or
+another update; clearing is not guaranteed to immediately change their UI.
 Clients may require mutual presence subscriptions to display the nickname;
 this does not change the account JID, MUC nickname or vCard.
 

@@ -285,10 +285,10 @@ async def test_display_name_presence_filter(monkeypatch):
     monkeypatch.setattr(adapter, "ClientXMPP", _FakeSlixmppClient)
     assert await a.connect()
     try:
-        assert a.client.handlers["presence_subscribed"] == [a._on_subscribed]
+        assert "presence_subscribed" not in a.client.handlers
         stamp = a.client.filters["out_sync"]
         tag = "{http://jabber.org/protocol/nick}nick"
-        for kind in (None, "available", "subscribe"):
+        for kind in ("subscribe",):
             presence = Presence()
             if kind is not None:
                 presence["type"] = kind
@@ -296,11 +296,13 @@ async def test_display_name_presence_filter(monkeypatch):
             assert presence.xml.find(tag).text == "Hermes"
             stamp(presence)
             assert len(presence.xml.findall(tag)) == 1
-        for kind in ("unavailable", "probe", "subscribed", "unsubscribe", "unsubscribed"):
+        for kind in ("available", "unavailable", "probe", "subscribed", "unsubscribe", "unsubscribed"):
             presence = Presence()
             presence["type"] = kind
             assert stamp(presence).xml.find(tag) is None
         presence = Presence()
+        assert stamp(presence).xml.find(tag) is None
+        presence["type"] = "subscribe"
         ET.SubElement(presence.xml, tag).text = "Existing"
         assert stamp(presence).xml.find(tag).text == "Existing"
         assert stamp(Message()).xml.find(tag) is None
@@ -310,16 +312,20 @@ async def test_display_name_presence_filter(monkeypatch):
 
 def test_display_name_sources(monkeypatch):
     monkeypatch.delenv("XMPP_DISPLAY_NAME", raising=False)
-    assert adapter.XmppAdapter(_make_cfg())._display_name == ""
+    assert adapter.XmppAdapter(_make_cfg())._display_name is None
     monkeypatch.setenv("XMPP_DISPLAY_NAME", "Env Name")
     assert adapter.XmppAdapter(_make_cfg())._display_name == "Env Name"
-    assert adapter.XmppAdapter(_make_cfg(display_name="Extra Name"))._display_name == "Extra Name"
-    for empty in ("", "  ", None):
+    assert adapter.XmppAdapter(_make_cfg(display_name="  Extra Name  "))._display_name == "Extra Name"
+    assert adapter.XmppAdapter(_make_cfg(display_name=None))._display_name is None
+    for empty in ("", "  "):
         assert adapter.XmppAdapter(_make_cfg(display_name=empty))._display_name == ""
     extra = adapter._apply_yaml_config({}, {"display_name": "YAML Name"})
     assert extra["display_name"] == "YAML Name"
-    monkeypatch.setenv("XMPP_DISPLAY_NAME", "  ")
-    assert adapter.XmppAdapter(_make_cfg())._display_name == ""
+    extra = adapter._apply_yaml_config({}, {"display_name": None})
+    assert adapter.XmppAdapter(_make_cfg(**extra))._display_name is None
+    for empty in ("", "  "):
+        monkeypatch.setenv("XMPP_DISPLAY_NAME", empty)
+        assert adapter.XmppAdapter(_make_cfg())._display_name == ""
 
 
 @pytest.mark.asyncio
@@ -335,17 +341,60 @@ async def test_empty_display_name_does_not_register_filter(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("allowed,allow_all", [(True, False), (False, False), (False, True)])
-async def test_subscription_refresh_is_authorized(allowed, allow_all):
+async def test_subscription_is_authorized(allowed, allow_all):
     a = adapter.XmppAdapter(_make_cfg(allow_all_users=allow_all))
     a.client = MagicMock()
     a.allowed_users = {"peer@example.org"} if allowed else set()
     presence = MagicMock()
     presence.get_from.return_value = "peer@example.org/mobile"
-    await a._on_subscribed(presence)
-    assert a.client.send_presence.call_count == int(allowed or allow_all)
-    a.client.send_presence.reset_mock()
     await a._on_subscribe(presence)
-    assert a.client.send_presence.call_count == (3 if allowed or allow_all else 0)
+    assert a.client.send_presence.call_count == (2 if allowed or allow_all else 0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("extra,env,method", [({}, None, None), ({}, "", "stop"),
+                                             ({}, "  ", "stop"), ({}, "  Hermes  ", "publish_nick"),
+                                             ({"display_name": "  Hermes  "}, None, "publish_nick"),
+                                             ({"display_name": ""}, "Env Name", "stop"),
+                                             ({"display_name": "  "}, None, "stop"),
+                                             ({"display_name": None}, "Env Name", None)])
+@pytest.mark.parametrize("fail", [False, True])
+async def test_display_name_publication(monkeypatch, extra, env, method, fail, caplog):
+    monkeypatch.delenv("XMPP_DISPLAY_NAME", raising=False)
+    if env is not None:
+        monkeypatch.setenv("XMPP_DISPLAY_NAME", env)
+    monkeypatch.setattr(adapter, "ClientXMPP", _FakeSlixmppClient)
+    a = adapter.XmppAdapter(_make_cfg(**extra))
+    assert await a.connect()
+    try:
+        nick = a.client["xep_0172"]
+        nick.publish_nick = AsyncMock(side_effect=RuntimeError("PEP unavailable") if fail else None)
+        nick.stop = AsyncMock(side_effect=RuntimeError("PEP unavailable") if fail else None)
+        await a.client.fire("session_bind")
+        await a.client.fire("session_bind")
+        assert a._session_ready.is_set()
+        assert not a.has_fatal_error
+        if method == "publish_nick":
+            nick.publish_nick.assert_awaited_once_with("Hermes")
+            nick.stop.assert_not_called()
+        elif method == "stop":
+            nick.stop.assert_awaited_once_with()
+            nick.publish_nick.assert_not_called()
+        else:
+            nick.publish_nick.assert_not_called()
+            nick.stop.assert_not_called()
+        if fail and method:
+            assert "display name publication failed" in caplog.text
+    finally:
+        await a.disconnect()
+
+
+@pytest.mark.parametrize("name", ["Extra Name", ""])
+def test_display_name_export_uses_extra(monkeypatch, name):
+    monkeypatch.delenv("XMPP_DISPLAY_NAME", raising=False)
+    extra = adapter._apply_yaml_config({}, {"display_name": "Top Level", "extra": {"display_name": name}})
+    assert extra["display_name"] == name
+    assert adapter.os.environ["XMPP_DISPLAY_NAME"] == name
 
 
 @pytest.mark.asyncio

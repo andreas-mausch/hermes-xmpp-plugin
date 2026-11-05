@@ -552,9 +552,11 @@ class XmppAdapter(BasePlatformAdapter):
             str(extra.get("muc_rooms") or os.getenv("XMPP_MUC_ROOMS", "")), self.muc_nick
         )
 
-        self._display_name = str(
-            extra.get("display_name", _scoped_getenv("XMPP_DISPLAY_NAME")) or ""
-        ).strip()
+        self._display_name: Optional[str] = extra.get(
+            "display_name", _scoped_getenv("XMPP_DISPLAY_NAME", None)
+        )
+        if self._display_name is not None:
+            self._display_name = self._display_name.strip()
 
         # Allow-list
         allow_all_raw = str(extra.get("allow_all_users", _scoped_getenv("XMPP_ALLOW_ALL_USERS", "")))
@@ -683,7 +685,7 @@ class XmppAdapter(BasePlatformAdapter):
 
         # Plugins - first-class features (XEP-0394, 0444, 0004, 0050, 0461, 0447)
         # Lazy-load: if slixmpp doesn't have them the adapter continues without them.
-        for plugin in ("xep_0394", "xep_0444", "xep_0004", "xep_0050", "xep_0461", "xep_0446", "xep_0447", "xep_0308", "xep_0424"):
+        for plugin in ("xep_0394", "xep_0444", "xep_0004", "xep_0050", "xep_0461", "xep_0446", "xep_0447", "xep_0308", "xep_0424", "xep_0172"):
             try:
                 client.register_plugin(plugin)
                 self._registered_plugins.add(plugin)
@@ -760,10 +762,9 @@ class XmppAdapter(BasePlatformAdapter):
         client.roster.auto_authorize = False
         client.roster.auto_subscribe = False
         client.add_event_handler("presence_subscribe", self._on_subscribe)
-        client.add_event_handler("presence_subscribed", self._on_subscribed)
         if self._display_name:
             def _presence_nick_filter(stanza):
-                if stanza.name == "presence" and stanza.get("type") in ("", "available", "subscribe", None):
+                if stanza.name == "presence" and stanza.get("type") == "subscribe":
                     from slixmpp.xmlstream import ET
 
                     tag = "{http://jabber.org/protocol/nick}nick"
@@ -1171,6 +1172,14 @@ class XmppAdapter(BasePlatformAdapter):
             await self._setup_adhoc_commands()
         except Exception:
             logger.debug("xmpp: ad-hoc command setup failed", exc_info=True)
+        if self._display_name is not None:
+            try:
+                if self._display_name:
+                    await self.client["xep_0172"].publish_nick(self._display_name)
+                else:
+                    await self.client["xep_0172"].stop()
+            except Exception:
+                logger.warning("xmpp: display name publication failed", exc_info=True)
 
     async def _on_subscribe(self, presence: Any) -> None:
         """Approve an inbound presence-subscription request from an allowed peer.
@@ -1192,21 +1201,9 @@ class XmppAdapter(BasePlatformAdapter):
         try:
             self.client.send_presence(pto=requester, ptype="subscribed")
             self.client.send_presence(pto=requester, ptype="subscribe")
-            self.client.send_presence()
             logger.info("xmpp: approved presence subscription for %s", requester)
         except Exception:
             logger.debug("xmpp: failed to approve subscription for %s", requester, exc_info=True)
-
-    async def _on_subscribed(self, presence: Any) -> None:
-        """Refresh available presence after an authorized subscription approval."""
-        if self.client is None:
-            return
-        try:
-            peer = self._bare(str(presence.get_from()))
-            if self.allow_all_users or peer in self.allowed_users:
-                self.client.send_presence()
-        except Exception:
-            logger.debug("xmpp: subscription presence refresh failed", exc_info=True)
 
     async def _on_disconnected(self, _event: Any) -> None:
         self._session_established = False
@@ -2444,7 +2441,7 @@ def _multiplex_active() -> bool:
         return False
 
 
-def _scoped_getenv(name: str, default: str = "", *, peek: bool = False) -> str:
+def _scoped_getenv(name: str, default: Optional[str] = "", *, peek: bool = False) -> Optional[str]:
     """``os.getenv`` honouring the active profile's secret scope.
 
     Resolution order: ``agent.secret_scope.get_secret`` (the per-profile
@@ -2463,11 +2460,14 @@ def _scoped_getenv(name: str, default: str = "", *, peek: bool = False) -> str:
     ``$HERMES_HOME/.env`` to judge whether an XMPP gateway is configured.
     Tuning vars must NOT peek — a developer-machine ``.env`` would otherwise
     override the class defaults of every bare test config (the
-    connect-timeout regression)."""
+    connect-timeout regression). A ``None`` default preserves explicitly empty
+    environment values while distinguishing them from missing values."""
     try:
         from agent.secret_scope import get_secret
     except Exception:
         # No secret-scope machinery at all: classic single-profile resolution.
+        if default is None:
+            return os.getenv(name, (_dotenv_peek(name) or None) if peek else None)
         return os.getenv(name, "") or (_dotenv_peek(name) if peek else "") or default
     try:
         value = get_secret(name, None)
@@ -2480,6 +2480,8 @@ def _scoped_getenv(name: str, default: str = "", *, peek: bool = False) -> str:
     if _multiplex_active():
         return default
     # Single-profile host / cron preflight: legacy resolution preserved.
+    if default is None:
+        return os.getenv(name, (_dotenv_peek(name) or None) if peek else None)
     return os.getenv(name, "") or (_dotenv_peek(name) if peek else "") or default
 
 
@@ -2566,7 +2568,7 @@ def _apply_yaml_config(yaml_cfg: dict, xmpp_cfg: dict) -> Optional[dict[str, Any
     # tenant's env. Values stay in `extra`, which every read resolves first.
     _multiplex = _multiplex_active()
     for key, env in env_map.items():
-        value = raw.get(key, extra.get(key))
+        value = extra.get(key) if key == "display_name" else raw.get(key, extra.get(key))
         if key == "home_channel" and isinstance(value, dict):
             value = value.get("chat_id")
         if value is None or os.getenv(env):
